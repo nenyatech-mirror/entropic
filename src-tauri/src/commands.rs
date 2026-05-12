@@ -79,7 +79,7 @@ const ENTROPIC_NATIVE_API_ALLOWED_HOSTS: &[&str] = &["localhost", "127.0.0.1"];
 const ENTROPIC_NATIVE_API_ALLOWED_DOMAINS: &[&str] = &["entropic.qu.ai"];
 const CLIENT_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
 const CLIENT_LOG_READ_MAX_BYTES: usize = 512 * 1024;
-const DEFAULT_PROXY_GATEWAY_MODEL: &str = "moonshotai/kimi-k2.6";
+const DEFAULT_PROXY_GATEWAY_MODEL: &str = "openai/gpt-5.5";
 const DEFAULT_LOCAL_ANTHROPIC_GATEWAY_MODEL: &str = "anthropic/claude-opus-4-6:thinking";
 const DEFAULT_LOCAL_OPENAI_GATEWAY_MODEL: &str = "openai-codex/gpt-5.3-codex";
 const DEFAULT_LOCAL_GOOGLE_GATEWAY_MODEL: &str = "google/gemini-2.5-pro";
@@ -8494,18 +8494,61 @@ fn resolve_managed_plugin_id(primary: &'static str, legacy: &'static str) -> Opt
 }
 
 fn build_tools_markdown(capabilities: &[CapabilityState]) -> String {
+    let proxy_mode = read_container_env("ENTROPIC_PROXY_MODE").is_some();
+    let web_search_available = !proxy_mode
+        && capability_enabled(capabilities, "web", true)
+        && container_plugin_exists("duckduckgo");
+    let browser_tool_available =
+        capability_enabled(capabilities, "browser", true) && container_plugin_exists("browser");
+    let patchright_browser_available = capability_enabled(capabilities, "browser", true)
+        && (container_path_exists("/data/entropic-skills/patchright-browser/SKILL.md")
+            || container_path_exists("/app/extensions/patchright-browser/SKILL.md"));
     let mut body = String::from("# TOOLS.md - Local Notes\n\n## Capabilities\n");
     for cap in capabilities {
-        let mark = if cap.enabled { "x" } else { " " };
+        let enabled = match cap.id.as_str() {
+            "web" => web_search_available,
+            "browser" => browser_tool_available || patchright_browser_available,
+            _ => cap.enabled,
+        };
+        let mark = if enabled { "x" } else { " " };
         body.push_str(&format!("- [{}] {}\n", mark, cap.label));
     }
-    if capability_enabled(capabilities, "web", true) {
-        body.push_str("\n## Web Search\n");
+    if web_search_available {
+        body.push_str("\n## Current Information\n");
         body.push_str(
             "- Use `web_search` for live or current information such as weather, news, prices, scores, and web lookups.\n",
         );
+        body.push_str("- If a user asks for current information, call `web_search` first.\n");
+    } else if browser_tool_available {
+        body.push_str("\n## Current Information\n");
         body.push_str(
-            "- If a user asks for current information, call `web_search` before saying no live source is available.\n",
+            "- `web_search` is not available in this runtime. For live or current information such as weather, news, prices, scores, and web lookups, use the browser tool instead.\n",
+        );
+        body.push_str(
+            "- If a user asks for current information, use the browser before saying no live source is available.\n",
+        );
+    } else if patchright_browser_available {
+        body.push_str("\n## Current Information\n");
+        body.push_str(
+            "- `web_search` is not available in this runtime, and Patchright is installed as a skill script rather than a direct tool.\n",
+        );
+        body.push_str(
+            "- For live or current information such as weather, news, prices, scores, and web lookups, use `exec` to run the Patchright browser skill scripts.\n",
+        );
+        body.push_str(
+            "- Search example: `cd /data/entropic-skills/patchright-browser && node scripts/search.mjs \"weather Austin TX\" --count 5`.\n",
+        );
+        body.push_str(
+            "- Fetch example: `cd /data/entropic-skills/patchright-browser && node scripts/fetch.mjs \"https://www.weather.gov/\"`.\n",
+        );
+        body.push_str(
+            "- If a user asks for current information, run one of those Patchright commands before saying no live source is available.\n",
+        );
+        body.push_str(
+            "- Do not ask for separate permission to use Patchright for public web lookups; the user's request for current public information is sufficient permission.\n",
+        );
+        body.push_str(
+            "- Answer the user with the result after running the command instead of explaining that Patchright is available.\n",
         );
     }
     if container_plugin_exists("lossless-claw") {

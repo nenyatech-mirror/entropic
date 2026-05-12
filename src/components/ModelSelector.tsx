@@ -5,10 +5,11 @@ import { Model } from "../lib/auth";
 
 // Proxy-mode models (routed through Entropic backend)
 export const PROXY_MODELS: Model[] = [
-  { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", provider: "MoonshotAI", tier: "premium", group: "OpenRouter" },
-  { id: "venice/kimi-k2-6", name: "Kimi K2.6 (Private)", provider: "Venice", tier: "premium" },
-  { id: "venice/claude-opus-4-7", name: "Claude Opus 4.7 (Deanonymized)", provider: "Venice", tier: "premium" },
   { id: "venice/openai-gpt-55", name: "GPT-5.5 (Deanonymized)", provider: "Venice", tier: "premium" },
+  { id: "openai/gpt-5.5", name: "GPT-5.5", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },
+  { id: "venice/claude-opus-4-7", name: "Claude Opus 4.7 (Deanonymized)", provider: "Venice", tier: "premium" },
+  { id: "venice/kimi-k2-6", name: "Kimi K2.6 (Private)", provider: "Venice", tier: "premium" },
+  { id: "moonshotai/kimi-k2.6", name: "Kimi K2.6", provider: "MoonshotAI", tier: "premium", group: "OpenRouter" },
   { id: "venice/deepseek-v3.2", name: "DeepSeek V3.2 (Private)", provider: "Venice", tier: "reasoning" },
   { id: "venice/zai-org-glm-4.7-flash", name: "GLM 4.7 Flash (Private)", provider: "Venice", tier: "fast" },
   { id: "venice/olafangensan-glm-4.7-flash-heretic", name: "GLM 4.7 Flash Heretic (Private)", provider: "Venice", tier: "fast" },
@@ -18,7 +19,6 @@ export const PROXY_MODELS: Model[] = [
   { id: "anthropic/claude-opus-4.7", name: "Claude Opus 4.7", provider: "Anthropic", tier: "premium", group: "OpenRouter" },
   { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6", provider: "Anthropic", tier: "premium", group: "OpenRouter" },
   { id: "anthropic/claude-opus-4.5", name: "Claude Opus 4.5", provider: "Anthropic", tier: "premium", group: "OpenRouter" },
-  { id: "openai/gpt-5.5", name: "GPT-5.5", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },
   { id: "openai/gpt-5.4", name: "GPT-5.4", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },
   { id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "OpenAI", tier: "reasoning", group: "OpenRouter" },
   { id: "openai/gpt-5.2", name: "GPT-5.2", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },

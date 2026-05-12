@@ -2530,71 +2530,34 @@ export function Chat({
     voiceSpeakingRunIdRef.current = runId;
 
     try {
-      const liveClient = clientRef.current;
-      if (!liveClient || !liveClient.isConnected()) {
-        throw new Error("OpenClaw is not connected, so the response could not be read back.");
-      }
-      const result = await liveClient.talkSpeak(speechText, {
-        voiceId: voiceSpeechProviderVoiceId,
-        speed: normalizedVoiceSpeechRate,
-      });
+      const generated = await generateSpeech(speechText);
       if (voiceSpeakingRunIdRef.current !== runId || !voiceSpeakResponseByRunIdRef.current.has(runId)) {
         return null;
       }
-      if (!result.audioBase64?.trim()) {
-        throw new Error("OpenClaw talk.speak did not return audio.");
+      const generatedAudio = generated.audio[0];
+      if (!generatedAudio?.previewUrl) {
+        throw new Error("Speech generation did not return audio.");
       }
 
-      clientLog("voice.reply.openclaw_tts", {
+      clientLog("voice.reply.generated_tts", {
         runId,
         sequence: chunk.sequence,
         source: chunk.source,
         chars: speechText.length,
-        provider: result.provider,
-        outputFormat: result.outputFormat,
-        mimeType: result.mimeType,
+        mimeType: generatedAudio.mimeType,
       });
-      return new Audio(audioDataUrlFromBase64(result.audioBase64, result.mimeType));
-    } catch (openClawError) {
-      const openClawMessage = formatUnknownUiError(
-        openClawError,
-        "OpenClaw talk.speak failed.",
+      return new Audio(generatedAudio.previewUrl);
+    } catch (error) {
+      const message = formatUnknownUiError(
+        error,
+        "Voice response speech generation failed.",
       );
-      addDiag(`voice reply OpenClaw TTS failed runId=${runId} seq=${chunk.sequence}: ${openClawMessage}`);
-      if (voiceSpeakingRunIdRef.current !== runId || !voiceSpeakResponseByRunIdRef.current.has(runId)) {
-        return null;
+      addDiag(`voice reply TTS failed runId=${runId} seq=${chunk.sequence}: ${message}`);
+      if (voiceSpeakingRunIdRef.current === runId) {
+        voiceSpeakingRunIdRef.current = null;
       }
-
-      try {
-        const fallback = await generateSpeech(speechText);
-        if (voiceSpeakingRunIdRef.current !== runId || !voiceSpeakResponseByRunIdRef.current.has(runId)) {
-          return null;
-        }
-        const generatedAudio = fallback.audio[0];
-        if (!generatedAudio?.previewUrl) {
-          throw new Error("Managed speech fallback did not return audio.");
-        }
-
-        clientLog("voice.reply.managed_tts_fallback", {
-          runId,
-          sequence: chunk.sequence,
-          source: chunk.source,
-          chars: speechText.length,
-          mimeType: generatedAudio.mimeType,
-        });
-        return new Audio(generatedAudio.previewUrl);
-      } catch (fallbackError) {
-        const fallbackMessage = formatUnknownUiError(
-          fallbackError,
-          "Managed speech fallback failed.",
-        );
-        addDiag(`voice reply fallback failed runId=${runId} seq=${chunk.sequence}: ${fallbackMessage}`);
-        if (voiceSpeakingRunIdRef.current === runId) {
-          voiceSpeakingRunIdRef.current = null;
-        }
-        setError(`${openClawMessage} ${fallbackMessage}`);
-        return null;
-      }
+      setError(message);
+      return null;
     }
   }
 
