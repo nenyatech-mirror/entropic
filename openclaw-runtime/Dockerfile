@@ -134,6 +134,233 @@ RUN PI_CODING_INDEX="/app/node_modules/@mariozechner/pi-coding-agent/dist/index.
       printf '\n// Legacy Entropic compatibility exports.\nimport { createCodingTools as __entropicCreateCodingTools, createReadTool as __entropicCreateReadTool } from "./core/sdk.js";\nexport const codingTools = __entropicCreateCodingTools(process.cwd());\nexport const readTool = __entropicCreateReadTool(process.cwd());\n' >> "$PI_CODING_INDEX"; \
     fi
 
+# Some OpenAI-compatible provider paths can return a visible XML/JSON tool-call
+# transcript even when tools were advertised. Recover that into an actual pi-ai
+# toolCall block so OpenClaw executes the tool instead of showing raw syntax.
+RUN node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const distDir = "/app/dist";
+const runner = fs.readdirSync(distDir).find((file) => /^pi-embedded-runner-.*\.js$/.test(file));
+if (!runner) throw new Error("pi-embedded-runner bundle not found");
+const filePath = path.join(distDir, runner);
+let source = fs.readFileSync(filePath, "utf8");
+const existingHelperStart = source.indexOf("// Entropic raw text tool-call recovery.");
+if (existingHelperStart >= 0) {
+  const existingHelperEnd = source.indexOf("function wrapStreamFnTrimToolCallNames(baseFn, allowedToolNames) {", existingHelperStart);
+  if (existingHelperEnd < 0) throw new Error("Existing Entropic helper end marker not found");
+  source = source.slice(0, existingHelperStart) + source.slice(existingHelperEnd);
+}
+const helper = String.raw`
+// Entropic raw text tool-call recovery.
+function parseEntropicRawTextToolCalls(text, allowedToolNames) {
+	const calls = [];
+	if (typeof text !== "string" || !/<tool_call/i.test(text)) return calls;
+	const blockRe = /<tool_call>\s*({[\s\S]*?})\s*<\/tool_call>/gi;
+	let match;
+	let index = 0;
+	while ((match = blockRe.exec(text))) {
+		try {
+			const parsed = JSON.parse(match[1]);
+			const rawName = typeof parsed?.name === "string" ? parsed.name : typeof parsed?.function?.name === "string" ? parsed.function.name : "";
+			const name = resolveExactAllowedToolName(rawName, allowedToolNames);
+			if (!name) continue;
+			const args = parsed?.arguments ?? parsed?.function?.arguments ?? {};
+			const normalizedArgs = typeof args === "string" ? JSON.parse(args || "{}") : args && typeof args === "object" ? args : {};
+			calls.push({
+				type: "toolCall",
+				id: "call_entropic_raw_" + ++index,
+				name,
+				arguments: normalizedArgs
+			});
+		} catch {}
+	}
+	return calls;
+}
+function recoverEntropicRawTextToolCallsInMessage(message, allowedToolNames) {
+	if (!message || typeof message !== "object" || !Array.isArray(message.content)) return false;
+	const textBlocks = message.content.filter((block) => block && typeof block === "object" && block.type === "text" && typeof block.text === "string");
+	const rawText = textBlocks.map((block) => block.text).join("\n");
+	const calls = parseEntropicRawTextToolCalls(rawText, allowedToolNames);
+	if (calls.length === 0) return false;
+	const cleanedText = rawText.replace(/<tool_call>\s*{[\s\S]*?}\s*<\/tool_call>/gi, "").trim();
+	const nextContent = [];
+	if (cleanedText && !/couldn['’]t execute|could not execute|can['’]t reliably|without risking a stale answer/i.test(cleanedText)) {
+		nextContent.push({ type: "text", text: cleanedText });
+	}
+	nextContent.push(...calls);
+	message.content = nextContent;
+	message.stopReason = "toolUse";
+	return true;
+}
+function wrapStreamFnRecoverEntropicRawTextToolCalls(baseFn, allowedToolNames) {
+	return (model, context, options) => {
+		const maybeStream = baseFn(model, context, options);
+		const wrap = (stream) => {
+			if (!stream || typeof stream !== "object") return stream;
+			const originalResult = typeof stream.result === "function" ? stream.result.bind(stream) : null;
+			if (originalResult) {
+				stream.result = async () => {
+					const message = await originalResult();
+					recoverEntropicRawTextToolCallsInMessage(message, allowedToolNames);
+					return message;
+				};
+			}
+			const originalIterator = typeof stream[Symbol.asyncIterator] === "function" ? stream[Symbol.asyncIterator].bind(stream) : null;
+			if (originalIterator) {
+				stream[Symbol.asyncIterator] = function() {
+					const iterator = originalIterator();
+					return {
+						async next() {
+							const result = await iterator.next();
+							if (!result.done && result.value && typeof result.value === "object") {
+								recoverEntropicRawTextToolCallsInMessage(result.value.partial, allowedToolNames);
+								recoverEntropicRawTextToolCallsInMessage(result.value.message, allowedToolNames);
+							}
+							return result;
+						},
+						async return(value) {
+							return iterator.return?.(value) ?? { done: true, value };
+						},
+						async throw(error) {
+							return iterator.throw?.(error) ?? Promise.reject(error);
+						}
+					};
+				};
+			}
+			return stream;
+		};
+		if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) return Promise.resolve(maybeStream).then(wrap);
+		return wrap(maybeStream);
+	};
+}
+function entropicContextLatestUserText(context) {
+	const messages = Array.isArray(context?.messages) ? context.messages : [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (!message || typeof message !== "object" || message.role !== "user") continue;
+		const content = message.content;
+		if (typeof content === "string") return content;
+		if (Array.isArray(content)) {
+			return content.map((block) => block && typeof block === "object" && block.type === "text" ? block.text || "" : "").join("\n");
+		}
+	}
+	return "";
+}
+function entropicLatestUserIndex(context) {
+	const messages = Array.isArray(context?.messages) ? context.messages : [];
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message && typeof message === "object" && message.role === "user") return i;
+	}
+	return -1;
+}
+function entropicMessageHasBrowserToolUse(message) {
+	const content = Array.isArray(message?.content) ? message.content : [];
+	return content.some((block) => block && typeof block === "object" && block.type === "toolCall" && block.name === "browser");
+}
+function entropicBrowserToolAlreadyUsedAfterLatestUser(context) {
+	const messages = Array.isArray(context?.messages) ? context.messages : [];
+	const latestUserIndex = entropicLatestUserIndex(context);
+	if (latestUserIndex < 0) return false;
+	return messages.slice(latestUserIndex + 1).some(entropicMessageHasBrowserToolUse);
+}
+function hasEntropicAllowedTool(allowedToolNames, name) {
+	if (allowedToolNames?.has?.(name)) return true;
+	if (Array.isArray(allowedToolNames)) return allowedToolNames.includes(name);
+	return false;
+}
+function shouldEntropicForceBrowserTool(context, allowedToolNames) {
+	if (!hasEntropicAllowedTool(allowedToolNames, "browser")) return false;
+	if (entropicBrowserToolAlreadyUsedAfterLatestUser(context)) return false;
+	const text = entropicContextLatestUserText(context).toLowerCase();
+	if (!text) return false;
+	if (/\b(weather|temperature|forecast|rain|storm|humidity|wind|air quality|aqi)\b/.test(text)) return true;
+	if (/\b(stock|stocks|market|markets|s&p|sp500|nasdaq|dow|price|prices|quote|closed|close today)\b/.test(text)) return true;
+	if (/\b(news|latest|current|right now|today|tonight|tomorrow|live|lookup|look up|web|internet)\b/.test(text)) return true;
+	return false;
+}
+function entropicBrowserUrlForCurrentInfo(context) {
+	const rawText = entropicContextLatestUserText(context).replace(/Sender \(untrusted metadata\):[\s\S]*?\]\s*/m, "").trim();
+	const query = rawText || "current information";
+	return "https://www.google.com/search?q=" + encodeURIComponent(query);
+}
+function createEntropicSyntheticBrowserToolResponse(model, context) {
+	const message = {
+		role: "assistant",
+		content: [{
+			type: "toolCall",
+			id: "call_entropic_browser_current_info",
+			name: "browser",
+			arguments: {
+				action: "open",
+				url: entropicBrowserUrlForCurrentInfo(context)
+			}
+		}],
+		stopReason: "toolUse",
+		api: model?.api ?? "",
+		provider: model?.provider ?? "",
+		model: model?.id ?? "",
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				total: 0
+			}
+		},
+		timestamp: Date.now()
+	};
+	return {
+		async *[Symbol.asyncIterator]() {},
+		result: async () => message
+	};
+}
+function wrapStreamFnForceBrowserForCurrentInfo(baseFn, allowedToolNames) {
+	return (model, context, options) => {
+		if (shouldEntropicForceBrowserTool(context, allowedToolNames)) {
+			return createEntropicSyntheticBrowserToolResponse(model, context);
+		}
+		return baseFn(model, context, options);
+	};
+}
+`;
+source = source.replace("function wrapStreamFnTrimToolCallNames(baseFn, allowedToolNames) {", `${helper}\nfunction wrapStreamFnTrimToolCallNames(baseFn, allowedToolNames) {`);
+if (!source.includes("wrapStreamFnForceBrowserForCurrentInfo(activeSession.agent.streamFn, allowedToolNames)")) {
+  source = source.replace(
+    "activeSession.agent.streamFn = wrapStreamFnSanitizeMalformedToolCalls(activeSession.agent.streamFn, allowedToolNames, transcriptPolicy);",
+    "activeSession.agent.streamFn = wrapStreamFnSanitizeMalformedToolCalls(activeSession.agent.streamFn, allowedToolNames, transcriptPolicy);\n\t\t\tactiveSession.agent.streamFn = wrapStreamFnForceBrowserForCurrentInfo(activeSession.agent.streamFn, allowedToolNames);\n\t\t\tactiveSession.agent.streamFn = wrapStreamFnRecoverEntropicRawTextToolCalls(activeSession.agent.streamFn, allowedToolNames);"
+  );
+}
+fs.writeFileSync(filePath, source);
+NODE
+
+# Venice/OpenRouter rejects OpenAI-compatible completion requests with an empty
+# tools array. OpenClaw can create tool-history turns for client-side tools such
+# as browser, so omit the field instead of sending `tools: []`.
+RUN node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const distDir = "/app/dist";
+const streamFile = fs.readdirSync(distDir).find((file) => /^anthropic-vertex-stream-.*\.js$/.test(file));
+if (!streamFile) throw new Error("anthropic-vertex-stream bundle not found");
+const filePath = path.join(distDir, streamFile);
+let source = fs.readFileSync(filePath, "utf8");
+source = source.replace(
+	"} else if (hasToolHistory(context.messages)) params.tools = [];",
+	"}"
+);
+fs.writeFileSync(filePath, source);
+NODE
+
 RUN chmod +x /app/browser-service/office_tools.py && \
     ln -sfn /app/browser-service/office_tools.py /usr/local/bin/entropic-office
 

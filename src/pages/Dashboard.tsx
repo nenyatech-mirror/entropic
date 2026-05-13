@@ -473,11 +473,19 @@ function defaultLocalImageGenerationModel(primaryModel?: string) {
 }
 
 function remapModelForMode(model: string, useLocalKeys: boolean): string {
-  if (useLocalKeys) {
-    if (LOCAL_MODEL_IDS.has(model)) {
-      return model;
+  const canonicalModel = (() => {
+    const base = stripModelParams(model).replace(/^openrouter\//, "");
+    if (base === "venice/openai-gpt-55" || base === "venice/openai-gpt-5.5" || base === "openai-gpt-55") {
+      return "openai/gpt-5.5";
     }
-    const base = stripModelParams(model);
+    return model;
+  })();
+
+  if (useLocalKeys) {
+    if (LOCAL_MODEL_IDS.has(canonicalModel)) {
+      return canonicalModel;
+    }
+    const base = stripModelParams(canonicalModel);
     if (LOCAL_MODEL_IDS.has(base)) {
       return base;
     }
@@ -514,10 +522,10 @@ function remapModelForMode(model: string, useLocalKeys: boolean): string {
     return DEFAULT_LOCAL_MODEL;
   }
 
-  if (PROXY_MODEL_IDS.has(model)) {
-    return model;
+  if (PROXY_MODEL_IDS.has(canonicalModel)) {
+    return canonicalModel;
   }
-  const base = stripModelParams(model);
+  const base = stripModelParams(canonicalModel);
   if (PROXY_MODEL_IDS.has(base)) {
     return base;
   }

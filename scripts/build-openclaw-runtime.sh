@@ -195,6 +195,14 @@ rsync -a --delete "$OPENCLAW_SOURCE/dist/" "$STAGING_DIR/dist/"
 
 # Copy package.json
 rsync -a "$OPENCLAW_SOURCE/package.json" "$STAGING_DIR/package.json"
+for metadata_file in pnpm-lock.yaml pnpm-workspace.yaml .npmrc; do
+    if [ -f "$OPENCLAW_SOURCE/$metadata_file" ]; then
+        rsync -a "$OPENCLAW_SOURCE/$metadata_file" "$STAGING_DIR/$metadata_file"
+    fi
+done
+if [ -d "$OPENCLAW_SOURCE/patches" ]; then
+    rsync -a --delete "$OPENCLAW_SOURCE/patches/" "$STAGING_DIR/patches/"
+fi
 
 # Build a compatibility dependency list from all upstream extension manifests.
 # OpenClaw's compiled root dist can statically import channel SDKs even when we
@@ -360,17 +368,22 @@ copy_filtered_node_modules() {
 }
 
 if command -v pnpm >/dev/null 2>&1; then
-    if pnpm --dir "$OPENCLAW_SOURCE" --filter openclaw deploy --prod --legacy "$PROD_DEPLOY_DIR"; then
+    if [ "${ENTROPIC_USE_PNPM_DEPLOY:-0}" != "1" ]; then
+        echo "Skipping pnpm deploy; using staged prune. Set ENTROPIC_USE_PNPM_DEPLOY=1 to try deploy."
+        copy_source_node_modules
+        if pnpm --dir "$STAGING_DIR" prune --prod --ignore-scripts --config.confirmModulesPurge=false; then
+            echo "Pruned staged node_modules to production dependencies."
+        else
+            echo "WARNING: pnpm prune --prod failed; continuing with copied node_modules."
+        fi
+    elif PNPM_CONFIG_IGNORE_UNUSED_PATCHES=true pnpm --dir "$OPENCLAW_SOURCE" --filter openclaw deploy --prod --legacy "$PROD_DEPLOY_DIR"; then
         if [ -d "$PROD_DEPLOY_DIR/node_modules" ]; then
             echo "Using prod-only node_modules from pnpm deploy."
             copy_filtered_node_modules "$PROD_DEPLOY_DIR/node_modules" "$STAGING_DIR/node_modules"
         else
             echo "WARNING: pnpm deploy succeeded but node_modules was missing. Falling back to staged prune."
             copy_source_node_modules
-            if [ -f "$OPENCLAW_SOURCE/pnpm-lock.yaml" ]; then
-                rsync -a "$OPENCLAW_SOURCE/pnpm-lock.yaml" "$STAGING_DIR/pnpm-lock.yaml"
-            fi
-            if pnpm --dir "$STAGING_DIR" prune --prod; then
+            if PNPM_CONFIG_IGNORE_UNUSED_PATCHES=true pnpm --dir "$STAGING_DIR" prune --prod --ignore-scripts --config.confirmModulesPurge=false; then
                 echo "Pruned staged node_modules to production dependencies."
             else
                 echo "WARNING: pnpm prune --prod failed; continuing with copied node_modules."
@@ -379,10 +392,7 @@ if command -v pnpm >/dev/null 2>&1; then
     else
         echo "WARNING: pnpm deploy --prod failed. Falling back to staged prune (install Linux node/pnpm in entropic-dev for faster local Windows builds)."
         copy_source_node_modules
-        if [ -f "$OPENCLAW_SOURCE/pnpm-lock.yaml" ]; then
-            rsync -a "$OPENCLAW_SOURCE/pnpm-lock.yaml" "$STAGING_DIR/pnpm-lock.yaml"
-        fi
-        if pnpm --dir "$STAGING_DIR" prune --prod; then
+        if PNPM_CONFIG_IGNORE_UNUSED_PATCHES=true pnpm --dir "$STAGING_DIR" prune --prod --ignore-scripts --config.confirmModulesPurge=false; then
             echo "Pruned staged node_modules to production dependencies."
         else
             echo "WARNING: pnpm prune --prod failed; continuing with copied node_modules."
@@ -496,8 +506,15 @@ else
 fi
 
 resolve_buildkit_setting
+docker_build_args=()
+if [ "${ENTROPIC_DOCKER_NO_CACHE:-0}" = "1" ]; then
+    docker_build_args+=(--no-cache)
+else
+    docker_build_args+=(--cache-from openclaw-runtime:latest)
+fi
+
 run_docker build \
-    --cache-from openclaw-runtime:latest \
+    "${docker_build_args[@]}" \
     -t openclaw-runtime:latest \
     "$STAGING_DIR"
 

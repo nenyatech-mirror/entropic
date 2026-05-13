@@ -636,6 +636,12 @@ fn normalize_proxy_gateway_model(model: &str) -> String {
     }
 
     let base_model = model_base_ref(trimmed);
+    match base_model.trim_start_matches("openrouter/") {
+        "venice/openai-gpt-55" | "venice/openai-gpt-5.5" | "openai-gpt-55" => {
+            return "openai/gpt-5.5".to_string();
+        }
+        _ => {}
+    }
     match base_model {
         "openrouter/free"
         | "anthropic/claude-opus-4-6"
@@ -5249,6 +5255,7 @@ const MANAGED_PLUGIN_IDS: &[&str] = &[
     "nova-x",
     "entropic-quai-builder",
 ];
+const DISABLED_NATIVE_SKILL_IDS: &[&str] = &["patchright-browser"];
 static GATEWAY_START_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static APPLIED_AGENT_SETTINGS_FINGERPRINT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -6243,10 +6250,29 @@ fn collect_skill_ids() -> Result<Vec<String>, String> {
     Ok(ids)
 }
 
+fn is_disabled_native_skill(skill_id: &str) -> bool {
+    DISABLED_NATIVE_SKILL_IDS.contains(&skill_id)
+}
+
+fn cleanup_disabled_native_skills() {
+    let container = preferred_existing_gateway_container_name();
+    let mut roots = vec![SKILLS_ROOT.to_string()];
+    roots.extend(LEGACY_SKILLS_ROOTS.iter().map(|root| root.to_string()));
+    roots.push(state_file("skills"));
+    roots.push(state_file("workspace/skills"));
+
+    for skill_id in DISABLED_NATIVE_SKILL_IDS {
+        for root in &roots {
+            let path = format!("{}/{}", root.trim_end_matches('/'), skill_id);
+            let _ = docker_exec_output(&["exec", container, "rm", "-rf", "--", &path]);
+        }
+    }
+}
+
 fn collect_workspace_skill_paths() -> Result<Vec<(String, String)>, String> {
     let mut out = Vec::new();
     for skill_id in collect_skill_ids()? {
-        if MANAGED_PLUGIN_IDS.contains(&skill_id.as_str()) {
+        if MANAGED_PLUGIN_IDS.contains(&skill_id.as_str()) || is_disabled_native_skill(&skill_id) {
             continue;
         }
 
@@ -8498,9 +8524,10 @@ fn build_tools_markdown(capabilities: &[CapabilityState]) -> String {
     let web_search_available = !proxy_mode
         && capability_enabled(capabilities, "web", true)
         && container_plugin_exists("duckduckgo");
-    let browser_tool_available =
-        capability_enabled(capabilities, "browser", true) && container_plugin_exists("browser");
+    let browser_tool_available = capability_enabled(capabilities, "browser", true)
+        && container_loadable_gateway_plugin_exists("browser");
     let patchright_browser_available = capability_enabled(capabilities, "browser", true)
+        && !is_disabled_native_skill("patchright-browser")
         && (container_path_exists("/data/entropic-skills/patchright-browser/SKILL.md")
             || container_path_exists("/app/extensions/patchright-browser/SKILL.md"));
     let mut body = String::from("# TOOLS.md - Local Notes\n\n## Capabilities\n");
@@ -8522,10 +8549,19 @@ fn build_tools_markdown(capabilities: &[CapabilityState]) -> String {
     } else if browser_tool_available {
         body.push_str("\n## Current Information\n");
         body.push_str(
-            "- `web_search` is not available in this runtime. For live or current information such as weather, news, prices, scores, and web lookups, use the browser tool instead.\n",
+            "- `web_search` is not available in this runtime. For live or current information such as weather, news, prices, scores, and web lookups, call the `browser` tool instead.\n",
         );
         body.push_str(
-            "- If a user asks for current information, use the browser before saying no live source is available.\n",
+            "- Use the `browser` tool with actions such as `open`, `navigate`, and `snapshot`; for example open `https://www.weather.gov/` or a search/weather page, then snapshot it and answer from the page.\n",
+        );
+        body.push_str(
+            "- Do not look for Patchright skill files under `~/.openclaw`, `/data/workspace/skills`, or `/data/skills`; those paths are not the browser tool. If `browser` is available, use `browser` directly.\n",
+        );
+        body.push_str(
+            "- Never print `<tool_call>`, JSON tool-call snippets, or raw tool syntax in a visible reply. Tool use must happen as a structured runtime tool call; if no structured tool call runs, say the live lookup could not be executed.\n",
+        );
+        body.push_str(
+            "- If a user asks for current information, call `browser` before saying no live source is available.\n",
         );
     } else if patchright_browser_available {
         body.push_str("\n## Current Information\n");
@@ -9387,34 +9423,12 @@ fn apply_default_qmd_memory_config(
 
     memory_search_obj.insert("enabled".to_string(), serde_json::json!(memory_enabled));
 
-    // Keep memory search sources aligned with session-memory setting.
-    if !memory_search_obj.contains_key("sources") {
-        if sessions_enabled {
-            memory_search_obj.insert(
-                "sources".to_string(),
-                serde_json::json!(["memory", "sessions"]),
-            );
-        } else {
-            memory_search_obj.insert("sources".to_string(), serde_json::json!(["memory"]));
-        }
-    } else if let Some(sources) = memory_search_obj
-        .get_mut("sources")
-        .and_then(|v| v.as_array_mut())
-    {
-        if !sources.iter().any(|v| v.as_str() == Some("memory")) {
-            sources.push(serde_json::json!("memory"));
-        }
-        if sessions_enabled && !sources.iter().any(|v| v.as_str() == Some("sessions")) {
-            sources.push(serde_json::json!("sessions"));
-        }
-    }
+    // Keep automatic retrieval focused on durable memory. Pulling prior sessions into every
+    // new chat can make the model repeat stale answers that look like cached responses.
+    memory_search_obj.insert("sources".to_string(), serde_json::json!(["memory"]));
 
-    if sessions_enabled {
-        let experimental = ensure_object_entry(memory_search_obj, "experimental");
-        if !experimental.contains_key("sessionMemory") {
-            experimental.insert("sessionMemory".to_string(), serde_json::json!(true));
-        }
-    }
+    let experimental = ensure_object_entry(memory_search_obj, "experimental");
+    experimental.insert("sessionMemory".to_string(), serde_json::json!(false));
 }
 
 fn append_entropic_skills_mount(docker_args: &mut Vec<String>) {
@@ -10680,6 +10694,7 @@ fn write_gateway_auth_profiles(
 fn apply_agent_settings(app: &AppHandle, state: &AppState) -> Result<(), String> {
     let settings = load_agent_settings(app);
     let desired_selection = desired_gateway_selection(app, state)?;
+    cleanup_disabled_native_skills();
     let installed_skill_paths = collect_workspace_skill_paths().unwrap_or_default();
     let installed_workspace_skill_ids: Vec<String> = installed_skill_paths
         .iter()
@@ -11880,8 +11895,15 @@ fn normalize_openclaw_config(cfg: &mut serde_json::Value) {
     append_unique_openclaw_config_array_strings(
         cfg,
         &["tools", "deny"],
-        &["file_write", "file_fetch", "dir_list", "dir_fetch"],
+        &["file_write", "file_fetch", "dir_list", "dir_fetch", "web_fetch"],
     );
+    for skill_id in DISABLED_NATIVE_SKILL_IDS {
+        set_openclaw_config_value(
+            cfg,
+            &["skills", "entries", skill_id, "enabled"],
+            serde_json::json!(false),
+        );
+    }
     // Newer OpenClaw validates plugin references even when they are disabled or
     // denied. Scrub legacy entries for plugins no longer bundled in the runtime
     // so persisted dev volumes can self-heal instead of failing on boot.

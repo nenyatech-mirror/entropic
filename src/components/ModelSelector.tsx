@@ -5,7 +5,6 @@ import { Model } from "../lib/auth";
 
 // Proxy-mode models (routed through Entropic backend)
 export const PROXY_MODELS: Model[] = [
-  { id: "venice/openai-gpt-55", name: "GPT-5.5 (Deanonymized)", provider: "Venice", tier: "premium" },
   { id: "openai/gpt-5.5", name: "GPT-5.5", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },
   { id: "venice/claude-opus-4-7", name: "Claude Opus 4.7 (Deanonymized)", provider: "Venice", tier: "premium" },
   { id: "venice/kimi-k2-6", name: "Kimi K2.6 (Private)", provider: "Venice", tier: "premium" },
