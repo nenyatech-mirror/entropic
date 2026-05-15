@@ -8022,7 +8022,7 @@ export function Chat({
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isLoading}
-                className="btn-secondary !p-2.5"
+                className="btn-secondary chat-composer-icon-button !p-0"
                 title={activeComposerMode === "image" ? "Attach reference image" : "Attach file"}
                 aria-label={activeComposerMode === "image" ? "Attach reference image" : "Attach file"}
               >
@@ -8071,7 +8071,7 @@ export function Chat({
                     : "Message your assistant"
               }
               rows={1}
-              className="form-input flex-1 resize-none leading-tight !border-[var(--composer-border)] focus:!border-[var(--purple-accent)]"
+              className="form-input chat-composer-input flex-1 resize-none !border-[var(--composer-border)] focus:!border-[var(--purple-accent)]"
               style={{ overflow: 'hidden' }}
             />
             {activeComposerMode === "chat" ? (
@@ -8080,7 +8080,7 @@ export function Chat({
                   <button
                     type="button"
                     onClick={stopChatVoiceCapture}
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-400/60 bg-red-500/15 text-red-500 shadow-sm transition-all duration-200 ease-out hover:bg-red-500/25 active:scale-95"
+                    className="chat-composer-icon-button inline-flex shrink-0 items-center justify-center border border-red-400/60 bg-red-500/15 text-red-500 shadow-sm transition-all duration-200 ease-out hover:bg-red-500/25 active:scale-95"
                     title="Stop recording"
                     aria-label="Stop recording"
                   >
@@ -8092,7 +8092,7 @@ export function Chat({
                     type="button"
                     onClick={handleComposerSend}
                     disabled={composerSendDisabled}
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--purple-accent-hover)]/70 bg-[var(--purple-accent)] text-white shadow-[0_10px_26px_rgba(91,36,139,0.26)] transition-all duration-200 ease-out hover:bg-[var(--purple-accent-hover)] hover:shadow-[0_12px_30px_rgba(91,36,139,0.34)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="chat-composer-icon-button inline-flex shrink-0 items-center justify-center border border-[var(--purple-accent-hover)]/70 bg-[var(--purple-accent)] text-white shadow-[0_10px_26px_rgba(91,36,139,0.26)] transition-all duration-200 ease-out hover:bg-[var(--purple-accent-hover)] hover:shadow-[0_12px_30px_rgba(91,36,139,0.34)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                     title="Send"
                     aria-label="Send"
                   >
@@ -8103,7 +8103,7 @@ export function Chat({
                     type="button"
                     onClick={() => void startChatVoiceCapture()}
                     disabled={chatMicDisabled || !(liveSpeech.isSupported || streamingSpeech.isSupported)}
-                    className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-default)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm transition-all duration-200 ease-out hover:bg-[var(--bg-tertiary)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="chat-composer-icon-button inline-flex shrink-0 items-center justify-center border border-[var(--border-default)] bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm transition-all duration-200 ease-out hover:bg-[var(--bg-tertiary)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
                     title={liveSpeech.isSupported || streamingSpeech.isSupported ? "Record" : "Microphone unavailable"}
                     aria-label={liveSpeech.isSupported || streamingSpeech.isSupported ? "Record" : "Microphone unavailable"}
                   >
@@ -8116,7 +8116,7 @@ export function Chat({
                 type="button"
                 onClick={handleComposerSend}
                 disabled={composerSendDisabled}
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--purple-accent-hover)]/70 bg-[var(--purple-accent)] text-white shadow-sm transition-all duration-200 ease-out hover:bg-[var(--purple-accent-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+                className="chat-composer-icon-button inline-flex shrink-0 items-center justify-center border border-[var(--purple-accent-hover)]/70 bg-[var(--purple-accent)] text-white shadow-sm transition-all duration-200 ease-out hover:bg-[var(--purple-accent-hover)] active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Send className="h-[18px] w-[18px]" />
               </button>
