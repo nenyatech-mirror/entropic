@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Determine version
         id: version
@@ -63,7 +63,7 @@ jobs:
             libayatana-appindicator3-dev
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
       - run: npm install -g pnpm
@@ -136,7 +136,7 @@ jobs:
           echo "tar_name=$TAR_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: entropic-linux-x86_64
           path: |
@@ -156,7 +156,7 @@ jobs:
           METAEOF
 
       - name: Upload updater metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: updater-linux
           path: updater-linux.json
@@ -173,8 +173,8 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -188,7 +188,7 @@ jobs:
           fi
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 

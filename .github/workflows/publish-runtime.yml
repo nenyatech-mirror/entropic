@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: Checkout Entropic
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: entropic
 
@@ -62,7 +62,7 @@ jobs:
           fi
 
       - name: Checkout OpenClaw
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: dominant-strategies/openclaw
           token: ${{ secrets.ENTROPIC_READ_PAT }}
@@ -70,7 +70,7 @@ jobs:
           ref: ${{ github.event.inputs.openclaw_ref }}
 
       - name: Checkout Entropic skills
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: dominant-strategies/entropic-skills
           token: ${{ secrets.ENTROPIC_READ_PAT }}
@@ -96,7 +96,7 @@ jobs:
           echo "OpenClaw commit: $OPENCLAW_COMMIT"
           echo "Skills commit:   $SKILLS_COMMIT"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -112,10 +112,10 @@ jobs:
         run: pnpm build
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build OpenClaw runtime image (linux/x86_64)
         working-directory: entropic
@@ -311,7 +311,7 @@ jobs:
           METAEOF
 
       - name: Upload runtime artifact (workflow)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: openclaw-runtime-multi-arch
           path: |

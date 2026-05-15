@@ -11,8 +11,7 @@ use base64::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
-use rand::rngs::OsRng;
-use rand::RngCore;
+use rand::Rng;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -78,6 +77,14 @@ const HOST_DROP_FILE_MAX_BYTES: u64 = 512 * 1024 * 1024;
 const ENTROPIC_NATIVE_API_ALLOWED_HOSTS: &[&str] = &["localhost", "127.0.0.1"];
 const ENTROPIC_NATIVE_API_ALLOWED_DOMAINS: &[&str] = &["entropic.qu.ai"];
 const CLIENT_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+fn bytes_to_lower_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
+}
 const CLIENT_LOG_READ_MAX_BYTES: usize = 512 * 1024;
 const DEFAULT_PROXY_GATEWAY_MODEL: &str = "openai/gpt-5.5";
 const DEFAULT_LOCAL_ANTHROPIC_GATEWAY_MODEL: &str = "anthropic/claude-opus-4-6:thinking";
@@ -198,7 +205,7 @@ fn desktop_terminal_manager() -> &'static DesktopTerminalManager {
 
 fn generate_terminal_session_id() -> String {
     let mut bytes = [0u8; 18];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -3207,7 +3214,7 @@ fn sha256_for_file(path: &Path) -> Result<String, String> {
         }
         hasher.update(&buf[..read]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(bytes_to_lower_hex(hasher.finalize()))
 }
 
 fn cached_runtime_tar_checksum_marker_valid(expected_sha: &str, tar_path: &Path) -> bool {
@@ -6534,7 +6541,7 @@ fn load_or_create_onlyoffice_jwt_secret(app: &AppHandle) -> Result<String, Strin
     }
 
     let mut secret_bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut secret_bytes);
+    rand::rng().fill_bytes(&mut secret_bytes);
     let secret = URL_SAFE_NO_PAD.encode(secret_bytes);
     fs::write(&path, format!("{}\n", secret))
         .map_err(|e| format!("Failed to persist ONLYOFFICE JWT secret: {}", e))?;
@@ -9755,7 +9762,7 @@ fn sanitize_file_name(name: &str) -> Result<String, String> {
 
 fn generate_attachment_id() -> String {
     let mut bytes = [0u8; ATTACHMENT_ID_RANDOM_BYTES];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    rand::rng().fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
 
@@ -10717,7 +10724,7 @@ fn apply_agent_settings(app: &AppHandle, state: &AppState) -> Result<(), String>
     let proxy_gateway_token_hash = proxy_gateway_token.as_deref().map(|token| {
         let mut hasher = Sha256::new();
         hasher.update(token.as_bytes());
-        format!("{:x}", hasher.finalize())
+        bytes_to_lower_hex(hasher.finalize())
     });
     let model = desired_selection.config_model.clone();
     let alias_model = desired_selection.alias_model.clone();
@@ -10800,7 +10807,7 @@ Use it for durable decisions, preferences, and facts that should persist across 
     let fingerprint_bytes = serde_json::to_vec(&fingerprint_payload)
         .map_err(|e| format!("Failed to serialize settings fingerprint: {}", e))?;
     fingerprint_hasher.update(fingerprint_bytes);
-    let settings_fingerprint = format!("{:x}", fingerprint_hasher.finalize());
+    let settings_fingerprint = bytes_to_lower_hex(fingerprint_hasher.finalize());
     {
         let cache = applied_agent_settings_fingerprint()
             .lock()
@@ -11779,7 +11786,7 @@ fn gateway_ws_url() -> String {
 
 fn generate_gateway_token() -> String {
     let mut token_bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut token_bytes);
+    rand::rng().fill_bytes(&mut token_bytes);
     URL_SAFE_NO_PAD.encode(token_bytes)
 }
 
@@ -19043,7 +19050,7 @@ fn parse_scope_list(raw: &str) -> Vec<String> {
 
 fn generate_pkce() -> (String, String) {
     let mut verifier_bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut verifier_bytes);
+    rand::rng().fill_bytes(&mut verifier_bytes);
     let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     (verifier, challenge)
@@ -19584,7 +19591,7 @@ pub async fn start_google_oauth(
     let (verifier, challenge) = generate_pkce();
     let state = URL_SAFE_NO_PAD.encode({
         let mut bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
         bytes
     });
 
@@ -19910,7 +19917,7 @@ pub async fn start_openai_oauth(
     let (verifier, challenge) = generate_pkce();
     let oauth_state = URL_SAFE_NO_PAD.encode({
         let mut bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        rand::rng().fill_bytes(&mut bytes);
         bytes
     });
 
@@ -20233,12 +20240,14 @@ fn load_or_create_gateway_device_identity(
         }
     }
 
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let mut secret_key = [0u8; 32];
+    rand::rng().fill_bytes(&mut secret_key);
+    let signing_key = SigningKey::from_bytes(&secret_key);
     let verifying_key = signing_key.verifying_key();
     let public_key_bytes = verifying_key.to_bytes();
     let mut hasher = Sha256::new();
     hasher.update(public_key_bytes);
-    let device_id = format!("{:x}", hasher.finalize());
+    let device_id = bytes_to_lower_hex(hasher.finalize());
     let created_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -20265,7 +20274,7 @@ pub async fn get_device_fingerprint_hash() -> Result<String, String> {
     let mut hasher = Sha256::new();
     hasher.update("entropic-device-fingerprint-v1:");
     hasher.update(raw.as_bytes());
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(bytes_to_lower_hex(hasher.finalize()))
 }
 
 #[tauri::command]

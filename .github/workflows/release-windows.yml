@@ -22,7 +22,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Determine version
         id: version
@@ -36,7 +36,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -96,7 +96,7 @@ jobs:
           "installer_name=$unsignedInstaller" >> $env:GITHUB_OUTPUT
 
       - name: Upload unsigned installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: unsigned-windows-installer
           path: ${{ steps.unsigned_artifacts.outputs.installer_name }}
@@ -109,9 +109,9 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -153,7 +153,7 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Download unsigned installer
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: unsigned-windows-installer
           path: artifacts/unsigned-windows
@@ -220,7 +220,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Upload signed Windows release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: entropic-windows-x86_64
           path: |
@@ -239,7 +239,7 @@ jobs:
           EOF
 
       - name: Upload updater metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: updater-windows
           path: updater-windows.json
@@ -253,7 +253,7 @@ jobs:
 
     steps:
       - name: Download signed Windows installer artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: entropic-windows-x86_64
           path: artifacts\entropic-windows-x86_64
@@ -284,8 +284,8 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -299,7 +299,7 @@ jobs:
           fi
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 

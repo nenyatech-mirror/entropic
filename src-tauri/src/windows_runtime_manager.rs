@@ -27,7 +27,7 @@ fn normalize_mode(mode: &str) -> &'static str {
 mod windows {
     use super::{normalize_mode, RUNTIME_MANAGER_DISPATCH_FLAG, RUNTIME_MANAGER_SERVER_FLAG};
     use base64::{engine::general_purpose::STANDARD, Engine as _};
-    use rand::RngCore;
+    use rand::Rng;
     use serde::{Deserialize, Serialize};
     use std::collections::HashSet;
     use std::io::{ErrorKind, Read, Write};
@@ -379,7 +379,7 @@ mod windows {
             .map_err(|e| format!("failed to create runtime manager dir: {}", e))?;
 
         let mut raw = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut raw);
+        rand::rng().fill_bytes(&mut raw);
         let token = STANDARD.encode(raw).replace(['/', '+', '='], "");
         std::fs::write(&path, &token)
             .map_err(|e| format!("failed to write runtime manager token: {}", e))?;

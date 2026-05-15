@@ -2,7 +2,7 @@ mod commands;
 mod runtime;
 mod windows_runtime_manager;
 
-use rand::RngCore;
+use rand::Rng;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -181,7 +181,7 @@ pub fn run() {
             let salt_path = data_dir.join("stronghold.salt");
             if !salt_path.exists() {
                 let mut salt = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut salt);
+                rand::rng().fill_bytes(&mut salt);
                 fs::write(&salt_path, salt)
                     .map_err(|e| format!("Failed to write stronghold salt: {}", e))?;
             }

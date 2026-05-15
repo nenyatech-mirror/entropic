@@ -4,6 +4,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use thiserror::Error;
 
+fn bytes_to_lower_hex(bytes: impl AsRef<[u8]>) -> String {
+    bytes
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
+}
+
 /// Global debug logger for runtime diagnostics
 fn debug_log(msg: &str) {
     use std::io::Write;
@@ -1600,7 +1608,7 @@ impl Runtime {
             }
             hasher.update(&buf[..read]);
         }
-        Ok(format!("{:x}", hasher.finalize()))
+        Ok(bytes_to_lower_hex(hasher.finalize()))
     }
 
     fn verify_windows_distro_artifact_hash(
@@ -3788,7 +3796,7 @@ exit 1
     fn sha256_hex(bytes: &[u8]) -> String {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
-        format!("{:x}", hasher.finalize())
+        bytes_to_lower_hex(hasher.finalize())
     }
 
     struct EnvGuard {

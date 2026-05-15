@@ -31,7 +31,7 @@ jobs:
 
     steps:
       - name: Checkout Entropic
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: entropic
 
@@ -104,7 +104,7 @@ jobs:
           rm -rf "$TMP_DIR"
 
       - name: Upload rootfs artifact (workflow)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-wsl-rootfs
           path: |

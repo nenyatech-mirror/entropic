@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Determine version
         id: version
@@ -35,7 +35,7 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
       - run: npm install -g pnpm
@@ -238,7 +238,7 @@ jobs:
           cp "$UPDATER_TAR" "Entropic-${{ steps.version.outputs.tag }}-mac-arm64-updater.tar.gz"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: entropic-mac-arm64
           path: |
@@ -257,7 +257,7 @@ jobs:
           METAEOF
 
       - name: Upload updater metadata
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: updater-mac
           path: updater-mac.json
@@ -274,8 +274,8 @@ jobs:
       cancel-in-progress: false
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -289,7 +289,7 @@ jobs:
           fi
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts
 
