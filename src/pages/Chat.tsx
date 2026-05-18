@@ -1803,6 +1803,7 @@ export function Chat({
   integrationsSyncing,
   integrationsMissing,
   onNavigate,
+  onBrowserLinkClick,
   onSessionsChange,
   requestedSession,
   requestedSessionAction,
@@ -1828,6 +1829,7 @@ export function Chat({
   integrationsSyncing?: boolean;
   integrationsMissing?: boolean;
   onNavigate?: (page: Page) => void;
+  onBrowserLinkClick?: (url: string) => void | Promise<void>;
   onSessionsChange?: (sessions: ChatSession[], currentKey: string | null) => void;
   requestedSession?: string | null;
   requestedSessionAction?: ChatSessionActionRequest | null;
@@ -7048,6 +7050,19 @@ export function Chat({
     onNavigate?.("files");
   }
 
+  async function openChatLinkInBrowser(url: string) {
+    if (onBrowserLinkClick) {
+      await onBrowserLinkClick(url);
+      return;
+    }
+    await handoffWorkspacePathToDesktop({
+      path: "",
+      action: "browser",
+      looksLikeFile: false,
+      url,
+    });
+  }
+
   async function saveGeneratedImageToWorkspace(
     message: Message,
     attachment: MessageAttachment,
@@ -7360,6 +7375,9 @@ export function Chat({
             <MarkdownContent
               content={payload.cleanText}
               onWorkspaceLinkClick={(link) => handoffWorkspacePathToDesktop(link)}
+              onBrowserLinkClick={(url) => {
+                void openChatLinkInBrowser(url);
+              }}
             />
           </div>
         ) : null}

@@ -4498,6 +4498,7 @@ export function Files({
               onRecoverProxyAuth={onRecoverProxyAuth}
               onModelChange={onModelChange}
               onNavigate={handleDesktopChatNavigate}
+              onBrowserLinkClick={openBrowserUrlInDesktop}
               onSessionsChange={(sessions, currentKey) => {
                 setChatSessions(sessions);
                 setChatCurrentSession((prev) => currentKey ?? prev);

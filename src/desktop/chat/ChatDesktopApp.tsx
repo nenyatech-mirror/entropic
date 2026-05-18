@@ -84,6 +84,7 @@ type ChatDesktopAppProps = {
   onRecoverProxyAuth?: () => Promise<boolean> | boolean;
   onModelChange: (model: string) => void;
   onNavigate: (page: DesktopChatNavigateTarget) => void;
+  onBrowserLinkClick?: (url: string) => void | Promise<void>;
   onSessionsChange: (sessions: SharedChatSession[], currentKey: string | null) => void;
 };
 
@@ -143,6 +144,7 @@ export function ChatDesktopApp({
   onRecoverProxyAuth,
   onModelChange,
   onNavigate,
+  onBrowserLinkClick,
   onSessionsChange,
 }: ChatDesktopAppProps) {
   const normalizedQuery = query.trim().toLowerCase();
@@ -380,6 +382,7 @@ export function ChatDesktopApp({
               integrationsSyncing={integrationsSyncing}
               integrationsMissing={integrationsMissing}
               onNavigate={onNavigate}
+              onBrowserLinkClick={onBrowserLinkClick}
               onSessionsChange={onSessionsChange}
               requestedSession={requestedSession}
               requestedSessionAction={requestedSessionAction}

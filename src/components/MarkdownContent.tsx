@@ -232,6 +232,7 @@ function renderWorkspaceChip(
 
 function buildComponents(
   onWorkspaceLinkClick?: (action: WorkspaceLinkAction) => void,
+  onBrowserLinkClick?: (url: string) => void,
 ): Components {
   return {
     p: ({ children }) => <p className="mb-2 break-words last:mb-0">{children}</p>,
@@ -285,12 +286,23 @@ function buildComponents(
       return (
         <a
           href={href}
-          target="_blank"
+          target={onBrowserLinkClick ? undefined : "_blank"}
           rel="noopener noreferrer"
           className="underline underline-offset-2 hover:opacity-80"
           style={{
             color: "var(--chat-link-accent)",
             textDecorationColor: "var(--chat-link-accent)",
+          }}
+          onClick={(event) => {
+            if (!href || !onBrowserLinkClick) return;
+            try {
+              const parsed = new URL(href);
+              if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return;
+              event.preventDefault();
+              onBrowserLinkClick(parsed.toString());
+            } catch {
+              // Keep default anchor behavior for non-absolute URLs.
+            }
           }}
         >
           {children}
@@ -317,16 +329,18 @@ function buildComponents(
 export const MarkdownContent = memo(function MarkdownContent({
   content,
   onWorkspaceLinkClick,
+  onBrowserLinkClick,
 }: {
   content: string;
   onWorkspaceLinkClick?: (action: WorkspaceLinkAction) => void;
+  onBrowserLinkClick?: (url: string) => void;
 }) {
   return (
     <div className="min-w-0 max-w-full break-words">
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkWorkspaceLinks]}
         urlTransform={markdownUrlTransform}
-        components={buildComponents(onWorkspaceLinkClick)}
+        components={buildComponents(onWorkspaceLinkClick, onBrowserLinkClick)}
       >
         {content}
       </ReactMarkdown>
