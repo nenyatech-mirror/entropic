@@ -203,6 +203,58 @@ type PersistedBrowserTab = {
 const HIDDEN_FILES = new Set(["HEARTBEAT.md", "IDENTITY.md", "SOUL.md", "TOOLS.md", "AGENTS.md", "USER.md"]);
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 const BINARY_EXTS = new Set(["pdf", "zip", "xlsx", "xls", "docx", "pptx"]);
+const TEXT_PREVIEW_EXTS = new Set([
+  "txt",
+  "md",
+  "markdown",
+  "csv",
+  "tsv",
+  "log",
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "xml",
+  "html",
+  "htm",
+  "css",
+  "js",
+  "jsx",
+  "ts",
+  "tsx",
+  "mjs",
+  "cjs",
+  "py",
+  "rs",
+  "go",
+  "java",
+  "kt",
+  "swift",
+  "c",
+  "cpp",
+  "cc",
+  "h",
+  "hpp",
+  "rb",
+  "php",
+  "sh",
+  "bash",
+  "zsh",
+  "sql",
+  "lua",
+  "r",
+  "pl",
+  "ex",
+  "exs",
+  "hs",
+  "ml",
+  "scala",
+  "clj",
+  "dart",
+  "vue",
+  "svelte",
+]);
 const DESKTOP_HANDOFF_STORAGE_KEY = "entropic.desktop.handoff";
 const DESKTOP_HANDOFF_EVENT = "entropic-desktop-handoff";
 const DESKTOP_SESSION_STORAGE_KEY = "entropic.desktop.session.v1";
@@ -221,6 +273,8 @@ const DESKTOP_WARM_CACHE_TTL_MS = 5 * 60 * 1000;
 const DESKTOP_IMAGE_PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
 const DESKTOP_IMAGE_PREVIEW_MAX_ITEMS = 48;
 const DESKTOP_IMAGE_PREVIEW_MAX_CONCURRENT = 4;
+const FILE_TEXT_PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+const FILE_IMAGE_PREVIEW_MAX_BYTES = 24 * 1024 * 1024;
 const BROWSER_APP_WINDOW_TITLEBAR_HEIGHT = 34;
 const BROWSER_TOOLBAR_HEIGHT = 49;
 const CHAT_WINDOW_MIN_SIZE_EXPANDED = { w: 560, h: 420 };
@@ -3544,6 +3598,11 @@ export function Files({
     const ext = entry.name.split(".").pop()?.toLowerCase() || "";
     try {
       if (IMAGE_EXTS.has(ext)) {
+        if (entry.size > FILE_IMAGE_PREVIEW_MAX_BYTES) {
+          setPreview({ kind: "binary", name: entry.name, path: entry.path, size: entry.size });
+          focusWindow("preview");
+          return;
+        }
         const base64 = await invoke<string>("read_workspace_file_base64", { path: entry.path });
         const mime =
           ext === "svg"
@@ -3555,7 +3614,7 @@ export function Files({
         focusWindow("preview");
         return;
       }
-      if (BINARY_EXTS.has(ext)) {
+      if (BINARY_EXTS.has(ext) || !TEXT_PREVIEW_EXTS.has(ext) || entry.size > FILE_TEXT_PREVIEW_MAX_BYTES) {
         setPreview({ kind: "binary", name: entry.name, path: entry.path, size: entry.size });
         focusWindow("preview");
         return;
