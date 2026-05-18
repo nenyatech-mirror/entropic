@@ -108,6 +108,11 @@ RUN EXT_DEPS="$(tr '\n' ' ' </app/all-extension-runtime-deps.txt)" && \
       npm install --omit=dev --ignore-scripts --legacy-peer-deps --package-lock=false --no-save $EXT_DEPS; \
     fi
 
+# Telegram and other bundled channel plugins use the public plugin runtime
+# config facade. Fail the image build if the bundled OpenClaw dist regresses
+# that compatibility API instead of publishing a runtime that crashes on boot.
+RUN node --input-type=module -e "const { createPluginRuntime } = await import('file:///app/dist/plugins/runtime/index.js'); const runtime = createPluginRuntime(); if (typeof runtime?.config?.getRuntimeConfig !== 'function') throw new Error('OpenClaw plugin runtime is missing config.getRuntimeConfig');"
+
 # Install bundled skill dependencies (runs as root before USER node)
 RUN for skill in /app/bundled-skills/*/; do \
       if [ -f "$skill/package.json" ]; then \

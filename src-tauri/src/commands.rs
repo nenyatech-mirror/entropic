@@ -15530,7 +15530,7 @@ fn telegram_runtime_fix_hint(
             .unwrap_or(false)
     {
         return Some(
-            "The OpenClaw runtime image is missing the Telegram config compatibility API. Rebuild the runtime image and restart the gateway."
+            "The installed OpenClaw runtime image is missing the Telegram config compatibility API. Install the latest runtime update, or rebuild the runtime image, then restart the gateway."
                 .to_string(),
         );
     }
