@@ -968,6 +968,7 @@ export function Files({
   const [docsRecent, setDocsRecent] = useState<OfficeRecentEntry[]>([]);
   const [slidesRecent, setSlidesRecent] = useState<OfficeRecentEntry[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [exportingFileName, setExportingFileName] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [selected, setSelected] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -3511,6 +3512,8 @@ export function Files({
   }
 
   async function exportWorkspaceEntry(entry: Pick<WorkspaceFileEntry, "name" | "path">) {
+    setExportingFileName(entry.name || workspacePathName(entry.path) || "file");
+    setError(null);
     try {
       await invoke("export_workspace_file", {
         path: entry.path,
@@ -3518,6 +3521,8 @@ export function Files({
       });
     } catch (e) {
       setError(`Export failed: ${describeError(e)}`);
+    } finally {
+      setExportingFileName(null);
     }
   }
 
@@ -4231,6 +4236,19 @@ export function Files({
               <div className="text-center">
                 <div className="w-10 h-10 rounded-full border-2 border-white border-t-transparent animate-spin mx-auto mb-3" />
                 <p className="text-sm font-medium text-white">Uploading...</p>
+              </div>
+            </div>
+          )}
+
+          {/* Export spinner */}
+          {exportingFileName && (
+            <div className="absolute inset-0 z-[60] flex items-center justify-center" style={{ background: "rgba(0,0,0,0.28)", backdropFilter: "blur(4px)" }}>
+              <div className="rounded-2xl border border-white/15 px-5 py-4 text-center shadow-2xl" style={{ background: "rgba(20,20,24,0.86)", color: "white" }}>
+                <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin" />
+                <p className="text-sm font-medium">Exporting to your computer</p>
+                <p className="mt-1 max-w-[280px] truncate text-xs" style={{ color: "rgba(255,255,255,0.7)" }} title={exportingFileName}>
+                  {exportingFileName}
+                </p>
               </div>
             </div>
           )}
