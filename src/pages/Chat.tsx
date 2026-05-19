@@ -1409,7 +1409,7 @@ const INTEGRATION_LOGOS: Partial<Record<
 
 const CRON_GUARD_LINES = [
   "This is a scheduled run. Do NOT create, edit, or run cron jobs.",
-  "Do NOT use gateway or exec tools. Just perform the task now and report results.",
+  "Use the available tools needed to complete this scheduled task, then report results.",
 ];
 const CRON_GUARD_BLOCK = `${CRON_GUARD_LINES.join("\n")}\n\n`;
 

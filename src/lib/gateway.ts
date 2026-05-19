@@ -222,6 +222,7 @@ type GatewayEvents = {
   disconnected: () => void;
   chat: (event: ChatEvent) => void;
   agent: (event: AgentEvent) => void;
+  cron: (event: CronEvent) => void;
   error: (error: string) => void;
 };
 
@@ -520,6 +521,8 @@ export class GatewayClient {
         this.emit("chat", frame.payload as ChatEvent);
       } else if (frame.event === "agent") {
         this.emit("agent", frame.payload as AgentEvent);
+      } else if (frame.event === "cron") {
+        this.emit("cron", frame.payload as CronEvent);
       }
     } else if (frame.type === "res") {
       const pending = this.pendingRequests.get(frame.id);
@@ -786,7 +789,7 @@ export class GatewayClient {
     await this.rpc("cron.remove", { id });
   }
 
-  async runCronJob(id: string, mode?: "force" | "normal"): Promise<unknown> {
+  async runCronJob(id: string, mode?: "force" | "due"): Promise<CronRunResult> {
     return this.rpc("cron.run", { id, mode: mode ?? "force" });
   }
 
@@ -867,7 +870,27 @@ export type CronPayload =
       bestEffortDeliver?: boolean;
     };
 
-export type CronJobState = "idle" | "running" | "error";
+export type CronRunStatus = "ok" | "error" | "skipped";
+
+export type CronJobState =
+  | "idle"
+  | "running"
+  | "error"
+  | {
+      nextRunAtMs?: number;
+      runningAtMs?: number;
+      lastRunAtMs?: number;
+      lastRunStatus?: CronRunStatus;
+      lastStatus?: CronRunStatus;
+      lastError?: string;
+      lastDurationMs?: number;
+    };
+
+export type CronRunResult =
+  | { ok: true; enqueued: true; runId?: string }
+  | { ok: true; ran: true }
+  | { ok: true; ran: false; reason: "already-running" | "not-due" | "invalid-spec" | string }
+  | { ok: false; reason?: string };
 
 export type CronJob = {
   id: string;
@@ -882,8 +905,25 @@ export type CronJob = {
   lastRunAt?: number;
   nextRunAt?: number;
   lastError?: string;
-  createdAt: number;
-  updatedAt: number;
+  createdAt?: number;
+  updatedAt?: number;
+  createdAtMs?: number;
+  updatedAtMs?: number;
+};
+
+export type CronEvent = {
+  jobId: string;
+  action: "added" | "updated" | "removed" | "started" | "finished";
+  job?: CronJob;
+  runAtMs?: number;
+  durationMs?: number;
+  status?: CronRunStatus;
+  error?: string;
+  summary?: string;
+  sessionId?: string;
+  sessionKey?: string;
+  runId?: string;
+  nextRunAtMs?: number;
 };
 
 export type CronRunLogEntry = {

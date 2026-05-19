@@ -27,6 +27,7 @@ import {
   type CronSchedule,
   type CronPayload,
   type CronRunLogEntry,
+  type CronRunResult,
 } from "../lib/gateway";
 import { resolveGatewayAuth } from "../lib/gateway-auth";
 import { getIntegrations, getIntegrationsCached, type Integration } from "../lib/integrations";
@@ -82,10 +83,41 @@ function describeSchedule(schedule: CronSchedule): string {
   }
 }
 
+function isCronJobRunning(job: CronJob): boolean {
+  if (job.state === "running") return true;
+  return typeof job.state === "object" && typeof job.state.runningAtMs === "number";
+}
+
+function hasCronJobError(job: CronJob): boolean {
+  if (job.state === "error") return true;
+  return typeof job.state === "object" && (job.state.lastRunStatus === "error" || Boolean(job.state.lastError));
+}
+
+function cronRunStarted(result: CronRunResult | null | undefined): boolean {
+  if (!result || typeof result !== "object") return true;
+  return result.ok === true && ("enqueued" in result ? result.enqueued === true : result.ran === true);
+}
+
+function cronRunSkipMessage(result: CronRunResult | null | undefined): string {
+  if (!result || typeof result !== "object") return "The job did not start.";
+  if (result.ok === false) return result.reason || "The job did not start.";
+  if (!("ran" in result) || result.ran !== false) return "The job did not start.";
+  switch (result.reason) {
+    case "already-running":
+      return "That job is already running.";
+    case "not-due":
+      return "That job is not due yet.";
+    case "invalid-spec":
+      return "That job cannot run because its saved configuration is invalid.";
+    default:
+      return result.reason || "The job did not start.";
+  }
+}
+
 function statusBadge(job: CronJob) {
+  if (isCronJobRunning(job)) return { label: "Running", className: "bg-amber-500/10 text-amber-500 border-amber-500/20" };
   if (!job.enabled) return { label: "Disabled", className: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)] border-[var(--border-default)]" };
-  if (job.state === "running") return { label: "Running", className: "bg-amber-500/10 text-amber-500 border-amber-500/20" };
-  if (job.state === "error") return { label: "Error", className: "bg-red-500/10 text-red-500 border-red-500/20" };
+  if (hasCronJobError(job)) return { label: "Error", className: "bg-red-500/10 text-red-500 border-red-500/20" };
   return { label: "Active", className: "bg-green-500/10 text-green-500 border-green-500/20" };
 }
 
@@ -108,21 +140,44 @@ function formatRunDuration(run: CronRunLogEntry): string | null {
 
 const CRON_GUARD_LINES = [
   "This is a scheduled run. Do NOT create, edit, or run cron jobs.",
-  "Do NOT use gateway or exec tools. Just perform the task now and report results.",
+  "Use the available tools needed to complete this scheduled task, then report results.",
 ];
 const CRON_GUARD_BLOCK = `${CRON_GUARD_LINES.join("\n")}\n\n`;
+const LEGACY_CRON_GUARD_LINES = [
+  "This is a scheduled run. Do NOT create, edit, or run cron jobs.",
+  "Do NOT use gateway or exec tools. Just perform the task now and report results.",
+];
+const LEGACY_CRON_GUARD_BLOCK = `${LEGACY_CRON_GUARD_LINES.join("\n")}\n\n`;
 
 function stripCronGuards(message: string): string {
   const trimmed = message ?? "";
   if (trimmed.startsWith(CRON_GUARD_BLOCK)) {
     return trimmed.slice(CRON_GUARD_BLOCK.length);
   }
+  if (trimmed.startsWith(LEGACY_CRON_GUARD_BLOCK)) {
+    return trimmed.slice(LEGACY_CRON_GUARD_BLOCK.length);
+  }
   const guardLineBlock = CRON_GUARD_LINES.join("\n");
   if (trimmed.startsWith(guardLineBlock)) {
     const remainder = trimmed.slice(guardLineBlock.length);
     return remainder.replace(/^\n\n?/, "");
   }
+  const legacyGuardLineBlock = LEGACY_CRON_GUARD_LINES.join("\n");
+  if (trimmed.startsWith(legacyGuardLineBlock)) {
+    const remainder = trimmed.slice(legacyGuardLineBlock.length);
+    return remainder.replace(/^\n\n?/, "");
+  }
   return trimmed;
+}
+
+function refreshCronGuard(message: string): string {
+  return `${CRON_GUARD_BLOCK}${stripCronGuards(message)}`;
+}
+
+function needsCronGuardRefresh(job: CronJob): job is CronJob & {
+  payload: Extract<CronPayload, { kind: "agentTurn" }>;
+} {
+  return job.payload.kind === "agentTurn" && job.payload.message.startsWith(LEGACY_CRON_GUARD_BLOCK);
 }
 
 type ScheduleType = "every" | "at" | "cron";
@@ -432,7 +487,7 @@ function editorToSchedule(editor: EditorState): CronSchedule {
 
 function editorToPayload(editor: EditorState): CronPayload {
   const baseMessage = stripCronGuards(editor.message || "Hello");
-  const message = `${CRON_GUARD_BLOCK}${baseMessage}`;
+  const message = refreshCronGuard(baseMessage);
   const payload: CronPayload = {
     kind: "agentTurn",
     message,
@@ -1413,8 +1468,29 @@ export function Tasks({ gatewayRunning, view = "tasks" }: Props) {
 
   async function handleRun(job: CronJob) {
     try {
+      setError(null);
       setRunningJobIds((prev) => new Set(prev).add(job.id));
-      await withGatewayClient((client) => client.runCronJob(job.id, "force"));
+      const runResult = await withGatewayClient(async (client) => {
+        if (needsCronGuardRefresh(job)) {
+          await client.updateCronJob(job.id, {
+            payload: {
+              ...job.payload,
+              message: refreshCronGuard(job.payload.message),
+            },
+          });
+        }
+        return client.runCronJob(job.id, "force");
+      });
+      if (!cronRunStarted(runResult)) {
+        setRunningJobIds((prev) => {
+          const next = new Set(prev);
+          next.delete(job.id);
+          return next;
+        });
+        setError(cronRunSkipMessage(runResult));
+        fetchJobs();
+        return;
+      }
       // Poll until the job finishes running, then show the result
       const pollUntilDone = async () => {
         for (let i = 0; i < 120; i++) {
@@ -1424,7 +1500,7 @@ export function Tasks({ gatewayRunning, view = "tasks" }: Props) {
             setJobs(refreshed);
             _cachedJobs = refreshed;
             const current = refreshed.find((j) => j.id === job.id);
-            if (!current || current.state !== "running") break;
+            if (!current || !isCronJobRunning(current)) break;
           } catch {
             break;
           }
@@ -2495,7 +2571,7 @@ export function Tasks({ gatewayRunning, view = "tasks" }: Props) {
                 </div>
               ) : (
                 jobs.map((job) => {
-                  const isManuallyRunning = runningJobIds.has(job.id) || job.state === "running";
+                  const isManuallyRunning = runningJobIds.has(job.id) || isCronJobRunning(job);
                   const badge = isManuallyRunning
                     ? { label: "Running", className: "bg-amber-500/10 text-amber-500 border-amber-500/20" }
                     : statusBadge(job);
@@ -2551,15 +2627,15 @@ export function Tasks({ gatewayRunning, view = "tasks" }: Props) {
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => handleRun(job)}
-                            disabled={job.state === "running" || runningJobIds.has(job.id)}
+                            disabled={isManuallyRunning}
                             className={clsx(
                               "px-3 py-1.5 rounded-lg transition-all border border-[var(--border-subtle)] inline-flex items-center gap-1.5 text-xs font-medium",
-                              job.state === "running" || runningJobIds.has(job.id)
+                              isManuallyRunning
                                 ? "bg-amber-500/10 text-amber-500 border-amber-500/20 cursor-not-allowed"
                                 : "bg-[var(--system-gray-6)] text-[var(--text-secondary)] hover:bg-green-500/10 hover:text-green-500"
                             )}
                           >
-                            {job.state === "running" || runningJobIds.has(job.id) ? (
+                            {isManuallyRunning ? (
                               <>
                                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 Running
