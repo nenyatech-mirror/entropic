@@ -34,6 +34,28 @@ type GatewayMutationResult = {
   wsReconnectExpected: boolean;
 };
 
+type TelegramPendingPairing = {
+  id: string;
+  code: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastSeenAt?: string | null;
+};
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  });
+}
+
 export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) {
   const [loadingState, setLoadingState] = useState(false);
   const [savingToken, setSavingToken] = useState(false);
@@ -52,8 +74,12 @@ export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) 
     setErrorMsg(null);
     setStatusMsg(null);
     Promise.all([
-      invoke<SavedChannelsState>("get_saved_channels_state"),
-      invoke<boolean>("get_telegram_connection_status").catch(() => false),
+      withTimeout(invoke<SavedChannelsState>("get_saved_channels_state"), 6000, "Loading Telegram setup"),
+      withTimeout(
+        invoke<boolean>("get_telegram_connection_status"),
+        6000,
+        "Checking Telegram connection",
+      ).catch(() => false),
     ])
       .then(([state, telegramConnected]) => {
         if (cancelled) return;
@@ -77,18 +103,45 @@ export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) 
     };
   }, [isOpen]);
 
+  async function refreshPendingPairingCode() {
+    const pending = await withTimeout(
+      invoke<TelegramPendingPairing | null>("get_telegram_pending_pairing_code"),
+      6000,
+      "Checking Telegram pairing code",
+    ).catch(() => null);
+    const code = pending?.code?.trim();
+    if (!code) {
+      return null;
+    }
+    const username = pending?.username?.trim();
+    setPairingCode((current) => current.trim() || code);
+    setStatusMsg(
+      username
+        ? `Found pairing code for @${username}. Click Approve.`
+        : "Found pairing code. Click Approve.",
+    );
+    return pending;
+  }
+
   async function verifyConnection() {
     setLoadingState(true);
     setErrorMsg(null);
     try {
-      const telegramConnected = await invoke<boolean>("get_telegram_connection_status").catch(() => false);
+      const telegramConnected = await withTimeout(
+        invoke<boolean>("get_telegram_connection_status"),
+        6000,
+        "Checking Telegram connection",
+      ).catch(() => false);
       setConnected(Boolean(telegramConnected));
       if (telegramConnected) {
         setStatusMsg("Telegram connected.");
         onSetupComplete();
         return;
       }
-      setStatusMsg("Telegram is not connected yet. Complete pairing in Telegram, then retry.");
+      const pending = await refreshPendingPairingCode();
+      if (!pending) {
+        setStatusMsg("Telegram is not connected yet. Complete pairing in Telegram, then retry.");
+      }
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Failed to verify Telegram connection: ${detail}`);
@@ -104,53 +157,69 @@ export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) 
     setErrorMsg(null);
     setStatusMsg(null);
     try {
-      const validation = await invoke<{
-        valid: boolean;
-        username?: string | null;
-        message: string;
-      }>("validate_telegram_token", { token: trimmedToken });
+      const validation = await withTimeout(
+        invoke<{
+          valid: boolean;
+          username?: string | null;
+          message: string;
+        }>("validate_telegram_token", { token: trimmedToken }),
+        12000,
+        "Telegram bot token validation",
+      );
       if (!validation.valid) {
         setErrorMsg(`Invalid bot token: ${validation.message}`);
         return;
       }
 
-      const state = await invoke<SavedChannelsState>("get_saved_channels_state");
+      const state = await withTimeout(
+        invoke<SavedChannelsState>("get_saved_channels_state"),
+        6000,
+        "Loading Telegram setup",
+      );
 
-      const result = await invoke<GatewayMutationResult>("apply_gateway_mutation", {
-        request: {
-          channels: {
-            discordEnabled: state.discord_enabled ?? false,
-            discordToken: state.discord_token ?? "",
-            telegramEnabled: true,
-            telegramToken: trimmedToken,
-            telegramDmPolicy: state.telegram_dm_policy ?? "pairing",
-            telegramGroupPolicy: state.telegram_group_policy ?? "allowlist",
-            telegramConfigWrites: state.telegram_config_writes ?? false,
-            telegramRequireMention: state.telegram_require_mention ?? true,
-            telegramReplyToMode: state.telegram_reply_to_mode ?? "off",
-            telegramLinkPreview: state.telegram_link_preview ?? true,
-            slackEnabled: state.slack_enabled ?? false,
-            slackBotToken: state.slack_bot_token ?? "",
-            slackAppToken: state.slack_app_token ?? "",
-            googlechatEnabled: state.googlechat_enabled ?? false,
-            googlechatServiceAccount: state.googlechat_service_account ?? "",
-            googlechatAudienceType: state.googlechat_audience_type ?? "app-url",
-            googlechatAudience: state.googlechat_audience ?? "",
-            whatsappEnabled: state.whatsapp_enabled ?? false,
-            whatsappAllowFrom: state.whatsapp_allow_from ?? "",
+      const result = await withTimeout(
+        invoke<GatewayMutationResult>("apply_gateway_mutation", {
+          request: {
+            channels: {
+              discordEnabled: state.discord_enabled ?? false,
+              discordToken: state.discord_token ?? "",
+              telegramEnabled: true,
+              telegramToken: trimmedToken,
+              telegramDmPolicy: state.telegram_dm_policy ?? "pairing",
+              telegramGroupPolicy: state.telegram_group_policy ?? "allowlist",
+              telegramConfigWrites: state.telegram_config_writes ?? false,
+              telegramRequireMention: state.telegram_require_mention ?? true,
+              telegramReplyToMode: state.telegram_reply_to_mode ?? "off",
+              telegramLinkPreview: state.telegram_link_preview ?? true,
+              slackEnabled: state.slack_enabled ?? false,
+              slackBotToken: state.slack_bot_token ?? "",
+              slackAppToken: state.slack_app_token ?? "",
+              googlechatEnabled: state.googlechat_enabled ?? false,
+              googlechatServiceAccount: state.googlechat_service_account ?? "",
+              googlechatAudienceType: state.googlechat_audience_type ?? "app-url",
+              googlechatAudience: state.googlechat_audience ?? "",
+              whatsappEnabled: state.whatsapp_enabled ?? false,
+              whatsappAllowFrom: state.whatsapp_allow_from ?? "",
+            },
           },
-        },
-      });
+        }),
+        90000,
+        "Saving Telegram bot token",
+      );
 
       setTokenSaved(true);
       const botHandle = validation.username?.trim() ? ` (@${validation.username.trim()})` : "";
 
-      const gatewayRunning = await invoke<boolean>("get_gateway_status").catch(() => false);
+      const gatewayRunning = await withTimeout(
+        invoke<boolean>("get_gateway_status"),
+        6000,
+        "Checking gateway status",
+      ).catch(() => false);
       if (gatewayRunning) {
         setStatusMsg(
           result.wsReconnectExpected
-            ? `Bot token saved${botHandle}. Gateway is reloading Telegram configuration. Send /start to your bot and paste the pairing code below.`
-            : `Bot token saved${botHandle}. Send /start to your bot and paste the pairing code below.`,
+            ? `Bot token saved${botHandle}. Gateway is reloading Telegram configuration. Send /start to your bot. If Telegram does not reply, the code will appear here automatically.`
+            : `Bot token saved${botHandle}. Send /start to your bot. If Telegram does not reply, the code will appear here automatically.`,
         );
       } else {
         setStatusMsg(
@@ -158,6 +227,12 @@ export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) 
         );
         window.dispatchEvent(new CustomEvent("entropic-start-gateway"));
       }
+      window.setTimeout(() => {
+        void refreshPendingPairingCode();
+      }, 1500);
+      window.setTimeout(() => {
+        void refreshPendingPairingCode();
+      }, 5000);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
       setErrorMsg(`Failed to save bot token: ${detail}`);
@@ -245,20 +320,29 @@ export function TelegramSetupModal({ isOpen, onClose, onSetupComplete }: Props) 
             </div>
 
             {tokenSaved ? (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={pairingCode}
-                  onChange={(e) => setPairingCode(e.target.value)}
-                  placeholder="Pairing code"
-                  className="form-input flex-1 !py-2"
-                />
+              <div className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={pairingCode}
+                    onChange={(e) => setPairingCode(e.target.value)}
+                    placeholder="Pairing code"
+                    className="form-input flex-1 !py-2"
+                  />
+                  <button
+                    onClick={approveTelegramPairingFromChat}
+                    disabled={approvingPairing || pairingCode.trim().length === 0}
+                    className="btn-secondary !text-xs !py-2"
+                  >
+                    {approvingPairing ? "Approving..." : "Approve"}
+                  </button>
+                </div>
                 <button
-                  onClick={approveTelegramPairingFromChat}
-                  disabled={approvingPairing || pairingCode.trim().length === 0}
-                  className="btn-secondary !text-xs !py-2"
+                  type="button"
+                  onClick={() => void refreshPendingPairingCode()}
+                  className="text-xs text-[var(--system-blue)] hover:opacity-80 transition-opacity text-left"
                 >
-                  {approvingPairing ? "Approving..." : "Approve"}
+                  Check for pairing code
                 </button>
               </div>
             ) : null}

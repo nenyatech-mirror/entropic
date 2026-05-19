@@ -138,6 +138,28 @@ type TelegramRuntimeHealth = {
   fixHint?: string | null;
 };
 
+type TelegramPendingPairing = {
+  id: string;
+  code: string;
+  username?: string | null;
+  firstName?: string | null;
+  lastSeenAt?: string | null;
+};
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: number | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = window.setTimeout(() => {
+      reject(new Error(`${label} timed out`));
+    }, timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timeoutId !== undefined) {
+      window.clearTimeout(timeoutId);
+    }
+  });
+}
+
 export function Channels() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [telegramEnabled, setTelegramEnabled] = useState(false);
@@ -160,6 +182,7 @@ export function Channels() {
   const [checkingConnection, setCheckingConnection] = useState(false);
 
   const [savingSetup, setSavingSetup] = useState(false);
+  const [savingSetupLabel, setSavingSetupLabel] = useState("Working...");
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -180,7 +203,11 @@ export function Channels() {
   }
 
   async function refreshTelegramConnectedStatus() {
-    const health = await invoke<TelegramRuntimeHealth>("get_telegram_runtime_health").catch(() => null);
+    const health = await withTimeout(
+      invoke<TelegramRuntimeHealth>("get_telegram_runtime_health"),
+      10000,
+      "Telegram status check",
+    ).catch(() => null);
     if (health) {
       setTelegramRuntimeHealth(health);
     }
@@ -190,9 +217,75 @@ export function Channels() {
   }
 
   async function refreshGatewayRunningStatus() {
-    const running = await invoke<boolean>("get_gateway_status").catch(() => false);
+    const running = await withTimeout(
+      invoke<boolean>("get_gateway_status"),
+      6000,
+      "Gateway status check",
+    ).catch(() => false);
     setGatewayRunning(Boolean(running));
     return Boolean(running);
+  }
+
+  async function refreshTelegramPendingPairingCode() {
+    const pending = await withTimeout(
+      invoke<TelegramPendingPairing | null>("get_telegram_pending_pairing_code"),
+      6000,
+      "Checking Telegram pairing code",
+    ).catch(() => null);
+    const code = pending?.code?.trim();
+    if (!code) {
+      return null;
+    }
+    const username = pending?.username?.trim();
+    setTelegramPairingCode((current) => current.trim() || code);
+    setTelegramPairingStatus(
+      username
+        ? `Found pairing code for @${username}. Click Approve.`
+        : "Found pairing code. Click Approve.",
+    );
+    return pending;
+  }
+
+  function applySavedChannelsState(state: SavedChannelsState) {
+    const telegramEnabledLoaded = state.telegram_enabled ?? false;
+    const telegramTokenLoaded = state.telegram_token || "";
+    setTelegramEnabled(telegramEnabledLoaded);
+    setTelegramToken(telegramTokenLoaded);
+    setTelegramDmPolicy(normalizeTelegramDmPolicy(state.telegram_dm_policy));
+    setTelegramGroupPolicy(normalizeTelegramGroupPolicy(state.telegram_group_policy));
+    setTelegramConfigWrites(state.telegram_config_writes ?? false);
+    setTelegramRequireMention(state.telegram_require_mention ?? true);
+    setTelegramReplyToMode(normalizeTelegramReplyToMode(state.telegram_reply_to_mode));
+    setTelegramLinkPreview(state.telegram_link_preview ?? true);
+    setTelegramTokenSaved(Boolean(telegramTokenLoaded.trim()));
+    return {
+      telegramEnabled: telegramEnabledLoaded,
+      telegramToken: telegramTokenLoaded,
+    };
+  }
+
+  async function refreshTelegramSetupState() {
+    const [state, connected, running] = await Promise.all([
+      withTimeout(invoke<SavedChannelsState>("get_saved_channels_state"), 6000, "Loading Telegram settings")
+        .catch(() => null),
+      refreshTelegramConnectedStatus(),
+      refreshGatewayRunningStatus(),
+    ]);
+    if (state) {
+      applySavedChannelsState(state);
+    }
+    setTelegramConnected(Boolean(connected));
+    setGatewayRunning(Boolean(running));
+    return { state, connected, running };
+  }
+
+  function scheduleTelegramSetupRefresh(delays = [0, 1500, 5000]) {
+    delays.forEach((delay) => {
+      window.setTimeout(() => {
+        void refreshTelegramSetupState();
+        void refreshTelegramPendingPairingCode();
+      }, delay);
+    });
   }
 
   useEffect(() => {
@@ -206,26 +299,16 @@ export function Channels() {
       let telegramEnabledLoaded = false;
       let telegramTokenLoaded = "";
       try {
-        const state = await invoke<SavedChannelsState>("get_saved_channels_state");
+        const state = await withTimeout(
+          invoke<SavedChannelsState>("get_saved_channels_state"),
+          6000,
+          "Loading Telegram settings",
+        );
         if (cancelled) return;
 
-        telegramEnabledLoaded = state.telegram_enabled ?? false;
-        telegramTokenLoaded = state.telegram_token || "";
-        setTelegramEnabled(telegramEnabledLoaded);
-        setTelegramToken(telegramTokenLoaded);
-        const dmPolicy = normalizeTelegramDmPolicy(state.telegram_dm_policy);
-        const groupPolicy = normalizeTelegramGroupPolicy(state.telegram_group_policy);
-        const configWrites = state.telegram_config_writes ?? false;
-        const requireMention = state.telegram_require_mention ?? true;
-        const replyToMode = normalizeTelegramReplyToMode(state.telegram_reply_to_mode);
-        const linkPreview = state.telegram_link_preview ?? true;
-        setTelegramDmPolicy(dmPolicy);
-        setTelegramGroupPolicy(groupPolicy);
-        setTelegramConfigWrites(configWrites);
-        setTelegramRequireMention(requireMention);
-        setTelegramReplyToMode(replyToMode);
-        setTelegramLinkPreview(linkPreview);
-        setTelegramTokenSaved(Boolean(telegramTokenLoaded.trim()));
+        const applied = applySavedChannelsState(state);
+        telegramEnabledLoaded = applied.telegramEnabled;
+        telegramTokenLoaded = applied.telegramToken;
       } catch {
         // Keep defaults; still transition out of loading.
       } finally {
@@ -264,8 +347,14 @@ export function Channels() {
       // Always refresh gateway status so the page recovers from transient failures
       void refreshGatewayRunningStatus();
       setCheckingConnection(true);
-      const connected = await refreshTelegramConnectedStatus();
-      setCheckingConnection(false);
+      const connected = await refreshTelegramConnectedStatus().finally(() => {
+        if (!cancelled) {
+          setCheckingConnection(false);
+        }
+      });
+      if (!connected) {
+        void refreshTelegramPendingPairingCode();
+      }
       if (connected) {
         // Stop polling once connected
         clearInterval(pollInterval);
@@ -310,20 +399,24 @@ export function Channels() {
   }) {
     try {
       console.log("[Channels] Auto-configuring Telegram...");
-      await invoke<GatewayMutationResult>("apply_gateway_mutation", {
-        request: {
-          channels: {
-            telegramEnabled: params.enabled,
-            telegramToken: params.token,
-            telegramDmPolicy: params.dmPolicy,
-            telegramGroupPolicy: params.groupPolicy,
-            telegramConfigWrites: params.configWrites,
-            telegramRequireMention: params.requireMention,
-            telegramReplyToMode: params.replyToMode,
-            telegramLinkPreview: params.linkPreview,
+      await withTimeout(
+        invoke<GatewayMutationResult>("apply_gateway_mutation", {
+          request: {
+            channels: {
+              telegramEnabled: params.enabled,
+              telegramToken: params.token,
+              telegramDmPolicy: params.dmPolicy,
+              telegramGroupPolicy: params.groupPolicy,
+              telegramConfigWrites: params.configWrites,
+              telegramRequireMention: params.requireMention,
+              telegramReplyToMode: params.replyToMode,
+              telegramLinkPreview: params.linkPreview,
+            },
           },
-        },
-      });
+        }),
+        90000,
+        "Auto-configuring Telegram",
+      );
       console.log("[Channels] Auto-configuration succeeded");
     } catch (err) {
       console.error("[Channels] Auto-configuration failed:", err);
@@ -332,29 +425,34 @@ export function Channels() {
 
   async function disconnectTelegram() {
     setSavingSetup(true);
+    setSavingSetupLabel("Removing...");
     setSaveMessage(null);
     setSaveError(null);
     try {
-      const result = await invoke<GatewayMutationResult>("apply_gateway_mutation", {
-        request: {
-          channels: {
-            telegramEnabled: false,
-            telegramToken: "",
-            telegramDmPolicy,
-            telegramGroupPolicy,
-            telegramConfigWrites,
-            telegramRequireMention,
-            telegramReplyToMode,
-            telegramLinkPreview,
+      const result = await withTimeout(
+        invoke<GatewayMutationResult>("apply_gateway_mutation", {
+          request: {
+            channels: {
+              telegramEnabled: false,
+              telegramToken: "",
+              telegramDmPolicy,
+              telegramGroupPolicy,
+              telegramConfigWrites,
+              telegramRequireMention,
+              telegramReplyToMode,
+              telegramLinkPreview,
+            },
           },
-        },
-      });
+        }),
+        45000,
+        "Disconnecting Telegram",
+      );
       setTelegramEnabled(false);
       setTelegramToken("");
       setTelegramTokenSaved(false);
       setTelegramConnected(false);
       setRestartPending(false);
-      const running = await refreshGatewayRunningStatus();
+      const running = gatewayRunning;
       if (result.wsReconnectExpected) {
         setSaveMessage(
           running ? "Telegram disconnected." : "Telegram disconnect is still applying.",
@@ -367,6 +465,8 @@ export function Channels() {
       setSaveError(`Failed to disconnect Telegram: ${detail}`);
     } finally {
       setSavingSetup(false);
+      setSavingSetupLabel("Working...");
+      scheduleTelegramSetupRefresh();
     }
   }
 
@@ -376,6 +476,7 @@ export function Channels() {
     console.log("[Channels] telegramToken length:", telegramToken.length);
 
     setSavingSetup(true);
+    setSavingSetupLabel(target === "token" ? "Validating..." : "Saving...");
     setSaveMessage(null);
     setSaveError(null);
     try {
@@ -383,9 +484,13 @@ export function Channels() {
       if (target === "token") {
         console.log("[Channels] Validating Telegram bot token...");
         try {
-          validationResult = await invoke<TelegramTokenValidationResult>("validate_telegram_token", {
-            token: telegramToken,
-          });
+          validationResult = await withTimeout(
+            invoke<TelegramTokenValidationResult>("validate_telegram_token", {
+              token: telegramToken,
+            }),
+            12000,
+            "Telegram bot token validation",
+          );
           console.log("[Channels] Token validation result:", validationResult);
         } catch (validationErr) {
           const detail = validationErr instanceof Error ? validationErr.message : String(validationErr);
@@ -407,36 +512,35 @@ export function Channels() {
       }
 
       console.log("[Channels] Invoking apply_gateway_mutation...");
-      const result = await invoke<GatewayMutationResult>("apply_gateway_mutation", {
-        request: {
-          channels: {
-            telegramEnabled: effectiveEnabled,
-            telegramToken,
-            telegramDmPolicy,
-            telegramGroupPolicy,
-            telegramConfigWrites,
-            telegramRequireMention,
-            telegramReplyToMode,
-            telegramLinkPreview,
+      setSavingSetupLabel(target === "token" ? "Saving..." : "Saving...");
+      const result = await withTimeout(
+        invoke<GatewayMutationResult>("apply_gateway_mutation", {
+          request: {
+            channels: {
+              telegramEnabled: effectiveEnabled,
+              telegramToken,
+              telegramDmPolicy,
+              telegramGroupPolicy,
+              telegramConfigWrites,
+              telegramRequireMention,
+              telegramReplyToMode,
+              telegramLinkPreview,
+            },
           },
-        },
-      });
+        }),
+        90000,
+        "Saving Telegram settings",
+      );
       console.log("[Channels] apply_gateway_mutation succeeded");
       setTelegramTokenSaved(Boolean(telegramToken.trim()));
-      const [connected, running] = await Promise.all([
-        refreshTelegramConnectedStatus(),
-        refreshGatewayRunningStatus(),
-      ]);
-      setTelegramConnected(Boolean(connected));
-      setGatewayRunning(Boolean(running));
-      const effectiveRunning = gatewayRunning || running;
+      const effectiveRunning = gatewayRunning;
 
       if (target === "token" && effectiveRunning) {
         const botHandle = validationResult?.username?.trim() ? ` @${validationResult.username.trim()}` : "";
         setRestartPending(false);
         setSaveMessage(
           result.wsReconnectExpected
-            ? `Bot token saved${botHandle}. Message your bot on Telegram and send /start to receive a pairing code.`
+            ? `Bot token saved${botHandle}. Message your bot on Telegram and send /start. If Telegram does not reply, the code will appear here automatically.`
             : `Bot token saved${botHandle}.`,
         );
       } else if (target === "token" && !effectiveRunning) {
@@ -462,7 +566,9 @@ export function Channels() {
       );
     } finally {
       setSavingSetup(false);
+      setSavingSetupLabel("Working...");
       console.log("[Channels] saveMessagingSetup completed");
+      scheduleTelegramSetupRefresh();
     }
   }
 
@@ -471,27 +577,26 @@ export function Channels() {
     setSaveError(null);
     setSaveMessage(null);
     try {
-      const result = await invoke<GatewayMutationResult>("apply_gateway_mutation", {
-        request: {
-          channels: {
-            telegramEnabled,
-            telegramToken,
-            telegramDmPolicy,
-            telegramGroupPolicy,
-            telegramConfigWrites,
-            telegramRequireMention,
-            telegramReplyToMode,
-            telegramLinkPreview,
+      const result = await withTimeout(
+        invoke<GatewayMutationResult>("apply_gateway_mutation", {
+          request: {
+            channels: {
+              telegramEnabled,
+              telegramToken,
+              telegramDmPolicy,
+              telegramGroupPolicy,
+              telegramConfigWrites,
+              telegramRequireMention,
+              telegramReplyToMode,
+              telegramLinkPreview,
+            },
           },
-        },
-      });
+        }),
+        45000,
+        "Applying Telegram configuration",
+      );
       setRestartPending(false);
-      const [connected, running] = await Promise.all([
-        refreshTelegramConnectedStatus(),
-        refreshGatewayRunningStatus(),
-      ]);
-      setTelegramConnected(Boolean(connected));
-      setGatewayRunning(Boolean(running));
+      scheduleTelegramSetupRefresh();
       setSaveMessage(
         result.wsReconnectExpected
           ? "Telegram configuration reapplied."
@@ -502,6 +607,7 @@ export function Channels() {
       setSaveError(`Failed to restart gateway: ${detail}`);
     } finally {
       setRestartingGateway(false);
+      scheduleTelegramSetupRefresh();
     }
   }
 
@@ -615,7 +721,7 @@ export function Channels() {
                     className="px-4 py-2 bg-[#1A1A2E] text-white rounded-lg text-sm font-semibold hover:opacity-80 disabled:opacity-50 flex items-center gap-2"
                   >
                     {savingSetup && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {savingSetup ? "Validating..." : "Save Bot Token"}
+                    {savingSetup ? savingSetupLabel : "Save Bot Token"}
                   </button>
                 </div>
                 {saveError && <p className="text-sm text-red-500">{saveError}</p>}
@@ -652,7 +758,7 @@ export function Channels() {
                           {telegramRuntimeIssue
                             ? "Telegram is configured, but the channel failed before it could send pairing codes."
                             : gatewayRunning
-                            ? "Message your bot on Telegram and send /start to receive a pairing code. Paste it below and click Approve."
+                            ? "Message your bot on Telegram and send /start. If Telegram does not reply, the pairing code will appear here automatically."
                             : "Start the gateway, then message your bot on Telegram and send /start to receive a pairing code."}
                         </p>
                       </div>
@@ -699,15 +805,22 @@ export function Channels() {
                         className="px-4 py-2 bg-[#1A1A2E] text-white rounded-lg text-sm font-semibold hover:opacity-80 disabled:opacity-50"
                       >
                         Approve
-                      </button>
-                    </div>
-                    {telegramPairingStatus && <p className="text-xs text-[var(--text-tertiary)]">{telegramPairingStatus}</p>}
+	                      </button>
+	                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void refreshTelegramPendingPairingCode()}
+                      className="text-xs text-[var(--system-blue)] hover:opacity-80 transition-opacity text-left"
+                    >
+                      Check for pairing code
+                    </button>
+	                    {telegramPairingStatus && <p className="text-xs text-[var(--text-tertiary)]">{telegramPairingStatus}</p>}
                     <button
                       onClick={disconnectTelegram}
                       disabled={savingSetup}
                       className="text-xs text-red-500 hover:text-red-400 transition-colors disabled:opacity-50 text-left"
                     >
-                      Remove bot token
+                      {savingSetup ? savingSetupLabel : "Remove bot token"}
                     </button>
                   </div>
                 )}
@@ -726,7 +839,7 @@ export function Channels() {
                         disabled={savingSetup}
                         className="px-3 py-1.5 text-xs font-medium rounded-lg text-red-500 hover:bg-red-500/10 transition-colors disabled:opacity-50 whitespace-nowrap"
                       >
-                        Disconnect
+                        {savingSetup ? savingSetupLabel : "Disconnect"}
                       </button>
                     </div>
                   </div>
@@ -834,7 +947,7 @@ export function Channels() {
                           disabled={savingSetup || telegramToken.trim().length === 0}
                           className="px-4 py-2 bg-[#1A1A2E] text-white rounded-lg text-sm font-semibold hover:opacity-80 disabled:opacity-50"
                         >
-                          {savingSetup ? "Saving..." : "Save Settings"}
+                          {savingSetup ? savingSetupLabel : "Save Settings"}
                         </button>
                       </div>
                     </div>

@@ -264,6 +264,7 @@ pub fn run() {
             commands::approve_pairing,
             commands::get_telegram_connection_status,
             commands::get_telegram_runtime_health,
+            commands::get_telegram_pending_pairing_code,
             commands::validate_telegram_token,
             commands::send_telegram_welcome_message,
             commands::restart_gateway_in_place,

@@ -5265,6 +5265,7 @@ const MANAGED_PLUGIN_IDS: &[&str] = &[
     "entropic-quai-builder",
 ];
 const DISABLED_NATIVE_SKILL_IDS: &[&str] = &["patchright-browser"];
+const GATEWAY_MUTATION_LOCK_TIMEOUT_SECS: u64 = 15;
 static GATEWAY_START_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static APPLIED_AGENT_SETTINGS_FINGERPRINT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
 
@@ -9024,7 +9025,22 @@ fn classify_gateway_mutation(
         );
     }
 
-    if request.channels.is_some() {
+    if let Some(channels) = request.channels.as_ref() {
+        let has_telegram_mutation = channels.telegram_enabled.is_some()
+            || channels.telegram_token.is_some()
+            || channels.telegram_dm_policy.is_some()
+            || channels.telegram_group_policy.is_some()
+            || channels.telegram_config_writes.is_some()
+            || channels.telegram_require_mention.is_some()
+            || channels.telegram_reply_to_mode.is_some()
+            || channels.telegram_link_preview.is_some();
+        if has_telegram_mutation {
+            return (
+                GatewayMutationPlan::ConfigReload,
+                "telegram channel change is applied by gateway reload".to_string(),
+            );
+        }
+
         return (
             GatewayMutationPlan::ConfigReload,
             "channel settings change is reloadable".to_string(),
@@ -9043,7 +9059,15 @@ async fn apply_gateway_mutation_inner(
     request: GatewayMutationRequest,
 ) -> Result<GatewayMutationResult, String> {
     let started = Instant::now();
-    let _guard = gateway_start_lock().lock().await;
+    let _guard = timeout(
+        Duration::from_secs(GATEWAY_MUTATION_LOCK_TIMEOUT_SECS),
+        gateway_start_lock().lock(),
+    )
+    .await
+    .map_err(|_| {
+        "Another gateway change is still applying. Restart the app if this does not clear shortly."
+            .to_string()
+    })?;
     let before = gateway_lifecycle_snapshot();
     let (plan, reason) = classify_gateway_mutation(&before, &request);
     let mut timings = GatewayMutationTimings::default();
@@ -9054,6 +9078,11 @@ async fn apply_gateway_mutation_inner(
     } else {
         None
     };
+    if let Some(settings) = maybe_updated_settings.as_ref() {
+        if !settings.telegram_enabled && settings.telegram_token.trim().is_empty() {
+            clear_telegram_pairing_credentials();
+        }
+    }
     if request.channels.is_some() {
         applied = true;
     }
@@ -9063,11 +9092,6 @@ async fn apply_gateway_mutation_inner(
             applied = applied || request.model.is_some() || request.image_model.is_some();
         }
         GatewayMutationPlan::ConfigReload => {
-            if let Some(settings) = maybe_updated_settings.as_ref() {
-                if !settings.telegram_enabled && settings.telegram_token.trim().is_empty() {
-                    clear_telegram_pairing_credentials();
-                }
-            }
             let _ = app.emit("gateway-restarting", ());
             let config_started = Instant::now();
             apply_agent_settings(app, state)?;
@@ -11419,7 +11443,7 @@ Use it for durable decisions, preferences, and facts that should persist across 
         remove_openclaw_config_value(&mut cfg, &["channels", "telegram"]);
     }
     remove_openclaw_config_value(&mut cfg, &["plugins", "entries", "telegram"]);
-    if container_plugin_exists("telegram") && bundled_plugin_entry_exists("telegram") {
+    if bundled_plugin_entry_exists("telegram") {
         remove_bundled_plugin_load_paths(&mut cfg, "telegram");
     } else {
         set_openclaw_config_value(
@@ -15494,6 +15518,16 @@ pub struct TelegramRuntimeHealth {
     fix_hint: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TelegramPendingPairing {
+    id: String,
+    code: String,
+    username: Option<String>,
+    first_name: Option<String>,
+    last_seen_at: Option<String>,
+}
+
 fn latest_telegram_startup_error(container: &str) -> Option<String> {
     let output = docker_command()
         .args(["logs", "--tail", "600", container])
@@ -15532,15 +15566,24 @@ fn telegram_runtime_fix_hint(
     last_error: Option<&str>,
     runtime_config_api_compatible: Option<bool>,
 ) -> Option<String> {
-    if runtime_config_api_compatible == Some(false)
-        || last_error
-            .map(|error| error.contains("getRuntimeConfig is not a function"))
-            .unwrap_or(false)
-    {
+    if runtime_config_api_compatible == Some(false) {
         return Some(
             "The installed OpenClaw runtime image is missing the Telegram config compatibility API. Install the latest runtime update, or rebuild the runtime image, then restart the gateway."
                 .to_string(),
         );
+    }
+
+    if last_error
+        .map(|error| error.contains("getRuntimeConfig is not a function"))
+        .unwrap_or(false)
+    {
+        return Some(if runtime_config_api_compatible == Some(true) {
+            "Telegram hit a plugin-runtime compatibility error. Rebuild or update the OpenClaw runtime image, then restart the gateway so the bundled Telegram channel is loaded cleanly."
+                .to_string()
+        } else {
+            "The installed OpenClaw runtime image may be missing the Telegram config compatibility API. Install the latest runtime update, or rebuild the runtime image, then restart the gateway."
+                .to_string()
+        });
     }
 
     last_error.map(|_| "Restart the gateway after saving the Telegram bot token. If this repeats, rebuild the runtime image.".to_string())
@@ -15667,6 +15710,71 @@ pub async fn get_telegram_connection_status() -> Result<bool, String> {
         Ok(health) => Ok(health.connected),
         Err(_) => Ok(false),
     }
+}
+
+#[tauri::command]
+pub async fn get_telegram_pending_pairing_code() -> Result<Option<TelegramPendingPairing>, String> {
+    let container = if named_gateway_container_exists(OPENCLAW_CONTAINER, true) {
+        OPENCLAW_CONTAINER
+    } else if named_gateway_container_exists(LEGACY_OPENCLAW_CONTAINER, true) {
+        LEGACY_OPENCLAW_CONTAINER
+    } else {
+        return Ok(None);
+    };
+
+    let script = r#"const fs=require('fs');
+const path=require('path');
+const credentialsDir='/data/credentials';
+const files=[];
+try {
+  for (const entry of fs.readdirSync(credentialsDir)) {
+    if (/^telegram(?:-[^/]+)?-pairing\.json$/.test(entry)) files.push(path.join(credentialsDir, entry));
+  }
+} catch {}
+
+const requests=[];
+for (const file of files) {
+  try {
+    const parsed=JSON.parse(fs.readFileSync(file,'utf8'));
+    if (Array.isArray(parsed.requests)) {
+      for (const request of parsed.requests) {
+        if (request && String(request.code || '').trim()) {
+          requests.push(request);
+        }
+      }
+    }
+  } catch {}
+}
+
+requests.sort((a,b) => {
+  const at=Date.parse(a.lastSeenAt || a.createdAt || '') || 0;
+  const bt=Date.parse(b.lastSeenAt || b.createdAt || '') || 0;
+  return bt - at;
+});
+
+const latest=requests[0];
+if (!latest) {
+  process.stdout.write('null');
+} else {
+  process.stdout.write(JSON.stringify({
+    id: String(latest.id || ''),
+    code: String(latest.code || ''),
+    username: latest.meta?.username || null,
+    firstName: latest.meta?.firstName || null,
+    lastSeenAt: latest.lastSeenAt || latest.createdAt || null
+  }));
+}"#;
+
+    let args = ["exec", container, "node", "-e", script];
+    let output = docker_exec_output(&args)
+        .map_err(|e| format!("Failed to read Telegram pending pairing code: {}", e))?;
+    let trimmed = output.trim();
+    if trimmed.is_empty() || trimmed == "null" {
+        return Ok(None);
+    }
+    serde_json::from_str::<TelegramPendingPairing>(trimmed)
+        .map(Some)
+        .map_err(|e| format!("Failed to parse Telegram pending pairing code: {}", e))
 }
 
 #[tauri::command]

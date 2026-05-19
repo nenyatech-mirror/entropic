@@ -113,6 +113,103 @@ RUN EXT_DEPS="$(tr '\n' ' ' </app/all-extension-runtime-deps.txt)" && \
 # that compatibility API instead of publishing a runtime that crashes on boot.
 RUN node --input-type=module -e "const { createPluginRuntime } = await import('file:///app/dist/plugins/runtime/index.js'); const runtime = createPluginRuntime(); if (typeof runtime?.config?.getRuntimeConfig !== 'function') throw new Error('OpenClaw plugin runtime is missing config.getRuntimeConfig');"
 
+# OpenClaw v2026.5.5's bundled Telegram channel calls the old top-level
+# runtime.getRuntimeConfig facade from the message-context path. The runtime now
+# exposes that compatibility API under runtime.config, so patch the compiled
+# dist until upstream ships the matching Telegram sidecar.
+RUN node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const distDir = "/app/dist";
+const from =
+  "runtime?.getRuntimeConfig ?? (await loadTelegramMessageContextRuntime()).getRuntimeConfig";
+const to =
+  "runtime?.config?.getRuntimeConfig ?? runtime?.config?.current ?? (await loadTelegramMessageContextRuntime()).getRuntimeConfig";
+
+function walkJs(dir) {
+  const out = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walkJs(full));
+    else if (entry.isFile() && entry.name.endsWith(".js")) out.push(full);
+  }
+  return out;
+}
+
+let patched = 0;
+for (const file of walkJs(distDir)) {
+  const source = fs.readFileSync(file, "utf8");
+  if (!source.includes(from)) continue;
+  fs.writeFileSync(file, source.split(from).join(to));
+  patched += 1;
+}
+
+if (patched === 0) {
+  throw new Error("Telegram runtime config compatibility patch did not match OpenClaw dist");
+}
+
+console.log(`Patched Telegram runtime config compatibility in ${patched} file(s).`);
+NODE
+
+# Keep stack traces for channel startup failures in the managed runtime image so
+# compatibility breaks in bundled channel sidecars point at the exact chunk.
+RUN node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const distDir = "/app/dist";
+const from =
+  "channel startup failed: ${formatErrorMessage(err)}";
+const to =
+  "channel startup failed: ${formatErrorMessage(err)}${err?.stack ? `\\n${err.stack}` : \"\"}";
+
+let patched = 0;
+for (const entry of fs.readdirSync(distDir, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+  const file = path.join(distDir, entry.name);
+  const source = fs.readFileSync(file, "utf8");
+  if (!source.includes(from)) continue;
+  fs.writeFileSync(file, source.split(from).join(to));
+  patched += 1;
+}
+
+if (patched === 0) {
+  throw new Error("Channel startup stack logging patch did not match OpenClaw dist");
+}
+
+console.log(`Patched channel startup stack logging in ${patched} file(s).`);
+NODE
+
+# OpenClaw v2026.5.5 has a gateway/channel-manager option rename mismatch:
+# createChannelManager expects getRuntimeConfig, while server.impl passes
+# loadConfig. Without this, any configured startup channel can fail before it
+# resolves accounts with "getRuntimeConfig is not a function".
+RUN node <<'NODE'
+const fs = require("fs");
+const path = require("path");
+
+const distDir = "/app/dist";
+const from = "loadConfig: () => applyPluginAutoEnable({";
+const to = "getRuntimeConfig: () => applyPluginAutoEnable({";
+
+let patched = 0;
+for (const entry of fs.readdirSync(distDir, { withFileTypes: true })) {
+  if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+  const file = path.join(distDir, entry.name);
+  const source = fs.readFileSync(file, "utf8");
+  if (!source.includes(from)) continue;
+  fs.writeFileSync(file, source.split(from).join(to));
+  patched += 1;
+}
+
+if (patched === 0) {
+  throw new Error("Gateway channel manager getRuntimeConfig patch did not match OpenClaw dist");
+}
+
+console.log(`Patched gateway channel manager config callback in ${patched} file(s).`);
+NODE
+
 # Install bundled skill dependencies (runs as root before USER node)
 RUN for skill in /app/bundled-skills/*/; do \
       if [ -f "$skill/package.json" ]; then \
