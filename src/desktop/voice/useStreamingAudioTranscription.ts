@@ -243,18 +243,27 @@ export function useStreamingAudioTranscription(callbacks: StreamingAudioTranscri
           continue;
         }
 
-        const content = await blobToBase64(chunk.blob);
-        const response = await invoke<ChatAudioTranscriptionResponse>("transcribe_chat_audio", {
-          model,
-          attachments: [
-            {
-              file_name: chunk.fileName,
-              mime_type: chunk.mimeType,
-              content,
-            },
-          ],
-        });
-        appendTranscript(response.text);
+        try {
+          const content = await blobToBase64(chunk.blob);
+          const response = await invoke<ChatAudioTranscriptionResponse>("transcribe_chat_audio", {
+            model,
+            attachments: [
+              {
+                file_name: chunk.fileName,
+                mime_type: chunk.mimeType,
+                content,
+              },
+            ],
+          });
+          appendTranscript(response.text);
+        } catch (error) {
+          if (accumulatedTranscriptRef.current) {
+            continue;
+          }
+          callbacksRef.current.onError?.(
+            error instanceof Error ? error.message : "Failed to transcribe live audio.",
+          );
+        }
       }
     } catch (error) {
       callbacksRef.current.onError?.(

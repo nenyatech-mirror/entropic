@@ -8360,7 +8360,7 @@ export function Chat({
                     <button
                       type="button"
                       onClick={stopChatVoiceCapture}
-                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-black text-white shadow-sm transition-all duration-200 ease-out hover:bg-black/85 active:scale-95"
+                      className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-red-500 text-white shadow-sm transition-all duration-200 ease-out hover:bg-red-600 active:scale-95"
                       title="Stop recording"
                       aria-label="Stop recording"
                     >
