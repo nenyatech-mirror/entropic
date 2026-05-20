@@ -21,6 +21,7 @@ import {
   PROXY_AUDIO_UNDERSTANDING_MODELS,
   PROXY_IMAGE_GENERATION_MODELS,
   PROXY_TEXT_TO_SPEECH_MODELS,
+  PROXY_VISION_MODELS,
 } from "../components/ModelSelector";
 import { WALLPAPERS, DEFAULT_WALLPAPER_ID, getWallpaperById } from "../lib/wallpapers";
 import { getProxyUrl, signOut as authSignOut } from "../lib/auth";
@@ -1861,7 +1862,12 @@ export function Settings({
               </SettingsRow>
               <SettingsRow label="Vision Model" icon={Image} wideControl>
                 <div className="settings-row-dropdown w-full">
-                  <ModelSelector wide selectedModel={imageModel} onModelChange={onImageModelChange} useLocalKeys={useLocalKeys} connectedProviders={useLocalKeys ? connectedProviders : undefined} />
+                  <ModelSelector
+                    wide
+                    selectedModel={imageModel}
+                    onModelChange={onImageModelChange}
+                    models={PROXY_VISION_MODELS}
+                  />
                 </div>
               </SettingsRow>
               <SettingsRow label="Image Generation Model" icon={Sparkles} wideControl>

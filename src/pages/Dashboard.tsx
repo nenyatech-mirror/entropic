@@ -37,6 +37,7 @@ import {
   PROXY_IMAGE_GENERATION_MODEL_IDS,
   PROXY_MODEL_IDS,
   PROXY_TEXT_TO_SPEECH_MODEL_IDS,
+  PROXY_VISION_MODEL_IDS,
 } from "../components/ModelSelector";
 import { hideEmbeddedPreviewWebview } from "../lib/nativePreview";
 import {
@@ -440,6 +441,7 @@ const DEFAULT_PROXY_MODEL = "openai/gpt-5.5";
 const DEFAULT_PROXY_ANTHROPIC_MODEL = "anthropic/claude-opus-4-6";
 const DEFAULT_PROXY_GOOGLE_MODEL = "google/gemini-3.1-pro-preview";
 const DEFAULT_LOCAL_MODEL = "anthropic/claude-opus-4-6:thinking";
+const DEFAULT_PROXY_VISION_MODEL = "google/gemini-3.1-flash-image-preview";
 const DEFAULT_PROXY_IMAGE_GENERATION_MODEL = "google/gemini-3.1-flash-image-preview";
 const DEFAULT_LOCAL_OPENAI_IMAGE_GENERATION_MODEL = "openai/gpt-image-1";
 const DEFAULT_LOCAL_GOOGLE_IMAGE_GENERATION_MODEL = "google/gemini-3.1-flash-image-preview";
@@ -475,6 +477,11 @@ function defaultLocalImageGenerationModel(primaryModel?: string) {
 function remapModelForMode(model: string, useLocalKeys: boolean): string {
   const canonicalModel = (() => {
     const base = stripModelParams(model).replace(/^openrouter\//, "");
+    if (base === "tencent/hy3-preview:free") {
+      return model.startsWith("openrouter/")
+        ? "openrouter/tencent/hy3-preview"
+        : "tencent/hy3-preview";
+    }
     if (base === "venice/openai-gpt-55" || base === "venice/openai-gpt-5.5" || base === "openai-gpt-55") {
       return "openai/gpt-5.5";
     }
@@ -587,6 +594,17 @@ function remapImageGenerationModelForMode(
     return DEFAULT_PROXY_IMAGE_GENERATION_MODEL;
   }
   return DEFAULT_PROXY_IMAGE_GENERATION_MODEL;
+}
+
+function remapVisionModel(model: string): string {
+  if (PROXY_VISION_MODEL_IDS.has(model)) {
+    return model;
+  }
+  const base = stripModelParams(model);
+  if (PROXY_VISION_MODEL_IDS.has(base)) {
+    return base;
+  }
+  return DEFAULT_PROXY_VISION_MODEL;
 }
 
 function remapAudioUnderstandingModelForMode(model: string, useLocalKeys: boolean): string {
@@ -873,8 +891,7 @@ export function Dashboard({ status: _status, onRefresh: _onRefresh }: Props) {
             ? DEFAULT_LOCAL_MODEL
             : DEFAULT_PROXY_MODEL;
         const nextCodeModel = bootstrap.settings.codeModel || "openai/gpt-5.3-codex";
-        const nextImageModel =
-          bootstrap.settings.imageModel || "google/gemini-3.1-flash-image-preview";
+        const nextImageModel = remapVisionModel(bootstrap.settings.imageModel || "");
         const nextImageGenerationModel = remapImageGenerationModelForMode(
           bootstrap.settings.imageGenerationModel || "",
           isLocal,
@@ -917,6 +934,9 @@ export function Dashboard({ status: _status, onRefresh: _onRefresh }: Props) {
         }
         if (bootstrap.settings.selectedModel !== nextSelectedModel) {
           normalizedPatch.selectedModel = nextSelectedModel;
+        }
+        if (bootstrap.settings.imageModel !== nextImageModel) {
+          normalizedPatch.imageModel = nextImageModel;
         }
         if (bootstrap.settings.imageGenerationModel !== nextImageGenerationModel) {
           normalizedPatch.imageGenerationModel = nextImageGenerationModel;

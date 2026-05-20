@@ -22,7 +22,7 @@ export const PROXY_MODELS: Model[] = [
   { id: "openai/gpt-5.3-codex", name: "GPT-5.3 Codex", provider: "OpenAI", tier: "reasoning", group: "OpenRouter" },
   { id: "openai/gpt-5.2", name: "GPT-5.2", provider: "OpenAI", tier: "recommended", group: "OpenRouter" },
   { id: "openai/gpt-5.2-codex", name: "GPT-5.2 Codex", provider: "OpenAI", tier: "reasoning", group: "OpenRouter" },
-  { id: "tencent/hy3-preview:free", name: "HY3 Preview (free)", provider: "Tencent", tier: "fast", group: "OpenRouter" },
+  { id: "tencent/hy3-preview", name: "HY3 Preview", provider: "Tencent", tier: "premium", group: "OpenRouter" },
   { id: "deepseek/deepseek-v3.2", name: "DeepSeek V3.2", provider: "DeepSeek", tier: "reasoning", group: "OpenRouter" },
   { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro Preview", provider: "Google", tier: "premium", group: "OpenRouter" },
   { id: "google/gemini-3.1-flash-image-preview", name: "Gemini 3.1 Flash Image Preview", provider: "Google", tier: "premium", group: "OpenRouter" },
@@ -35,7 +35,7 @@ export const LOCAL_MODELS: Model[] = [
   { id: "openrouter/moonshotai/kimi-k2.6", name: "Kimi K2.6", provider: "OpenRouter", tier: "premium" },
   { id: "openrouter/anthropic/claude-opus-4.7", name: "Claude Opus 4.7", provider: "OpenRouter", tier: "premium" },
   { id: "openrouter/openai/gpt-5.5", name: "GPT-5.5", provider: "OpenRouter", tier: "recommended" },
-  { id: "openrouter/tencent/hy3-preview:free", name: "HY3 Preview (free)", provider: "OpenRouter", tier: "fast" },
+  { id: "openrouter/tencent/hy3-preview", name: "HY3 Preview", provider: "OpenRouter", tier: "premium" },
   { id: "openrouter/deepseek/deepseek-v3.2", name: "DeepSeek V3.2", provider: "OpenRouter", tier: "reasoning" },
   // Anthropic — thinking-enabled variants first
   { id: "anthropic/claude-opus-4.7:thinking", name: "Claude Opus 4.7 (Thinking)", provider: "Anthropic", tier: "premium" },
@@ -127,6 +127,10 @@ export const LOCAL_IMAGE_GENERATION_MODELS: Model[] = [
   },
 ];
 
+export const PROXY_VISION_MODELS: Model[] = PROXY_MODELS.filter((model) =>
+  PROXY_IMAGE_GENERATION_MODELS.some((imageModel) => imageModel.id === model.id),
+);
+
 export const PROXY_AUDIO_UNDERSTANDING_MODELS: Model[] = [
   {
     id: "venice/nvidia/parakeet-tdt-0.6b-v3",
@@ -181,6 +185,7 @@ export const LOCAL_MODEL_IDS = new Set(LOCAL_MODELS.map(m => m.id));
 export const PROXY_IMAGE_GENERATION_MODEL_IDS = new Set(
   PROXY_IMAGE_GENERATION_MODELS.map((m) => m.id),
 );
+export const PROXY_VISION_MODEL_IDS = new Set(PROXY_VISION_MODELS.map((m) => m.id));
 export const LOCAL_IMAGE_GENERATION_MODEL_IDS = new Set(
   LOCAL_IMAGE_GENERATION_MODELS.map((m) => m.id),
 );

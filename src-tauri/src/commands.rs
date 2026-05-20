@@ -645,6 +645,9 @@ fn normalize_proxy_gateway_model(model: &str) -> String {
     }
 
     let base_model = model_base_ref(trimmed);
+    if base_model.trim_start_matches("openrouter/") == "tencent/hy3-preview:free" {
+        return "tencent/hy3-preview".to_string();
+    }
     match base_model.trim_start_matches("openrouter/") {
         "venice/openai-gpt-55" | "venice/openai-gpt-5.5" | "openai-gpt-55" => {
             return "openai/gpt-5.5".to_string();
@@ -662,7 +665,7 @@ fn normalize_proxy_gateway_model(model: &str) -> String {
         | "openai/gpt-5.3-codex"
         | "openai/gpt-5.2"
         | "openai/gpt-5.2-codex"
-        | "tencent/hy3-preview:free"
+        | "tencent/hy3-preview"
         | "deepseek/deepseek-v3.2"
         | "google/gemini-3.1-pro-preview"
         | "google/gemini-3.1-flash-image-preview"
@@ -717,6 +720,9 @@ fn normalize_proxy_runtime_model_ref(model: &str) -> String {
 fn openrouter_provider_model_id(model: &str) -> String {
     let base = model_base_ref(model);
     let stripped = base.trim_start_matches("openrouter/");
+    if stripped == "tencent/hy3-preview:free" {
+        return "tencent/hy3-preview".to_string();
+    }
     if stripped == "free" || stripped == "auto" {
         base.to_string()
     } else {
