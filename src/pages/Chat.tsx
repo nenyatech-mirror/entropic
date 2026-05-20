@@ -230,6 +230,7 @@ const CHAT_WORKSPACE_PREFIXES = [
   "/home/node/.openclaw/workspace",
 ];
 const CHAT_WORKSPACE_PATH_RE = /((?:\/data\/(?:\.openclaw\/)?workspace|\/home\/node\/\.openclaw\/workspace)(?:\/[^\s`"'<>]+)?)/g;
+const CHAT_OFFICE_FILENAME_RE = /(^|[\s`"'([])([A-Za-z0-9][A-Za-z0-9._-]*\.(?:docx|xlsx|pptx))(?=$|[\s`"')\],:;.!?])/gi;
 const FINAL_RESPONSE_RECOVERY_RETRY_MS = 1200;
 const FINAL_RESPONSE_RECOVERY_MAX_ATTEMPTS = 2;
 const MAX_VOICE_RESPONSE_SPEECH_CHARS = 1800;
@@ -409,9 +410,7 @@ function extractWorkspaceChatReferences(content: string): WorkspaceChatReference
   const refs: WorkspaceChatReference[] = [];
   const seen = new Set<string>();
 
-  for (const match of content.matchAll(CHAT_WORKSPACE_PATH_RE)) {
-    const path = normalizeChatWorkspacePath(match[1] || "");
-    if (path === null) continue;
+  const pushReference = (path: string) => {
     const name = workspacePathName(path);
     const ext = name.split(".").pop()?.toLowerCase() || "";
     const ref: WorkspaceChatReference = {
@@ -421,9 +420,21 @@ function extractWorkspaceChatReferences(content: string): WorkspaceChatReference
       isHtml: ext === "html" || ext === "htm",
       looksLikeFile: Boolean(path) && name.includes("."),
     };
-    if (seen.has(ref.key)) continue;
+    if (seen.has(ref.key)) return;
     seen.add(ref.key);
     refs.push(ref);
+  };
+
+  for (const match of content.matchAll(CHAT_WORKSPACE_PATH_RE)) {
+    const path = normalizeChatWorkspacePath(match[1] || "");
+    if (path === null) continue;
+    pushReference(path);
+  }
+
+  for (const match of content.matchAll(CHAT_OFFICE_FILENAME_RE)) {
+    const filename = trimChatWorkspaceToken(match[2] || "");
+    if (!filename || filename.includes("/")) continue;
+    pushReference(filename);
   }
 
   return refs;
