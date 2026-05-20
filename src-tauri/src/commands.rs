@@ -11393,11 +11393,7 @@ Use it for durable decisions, preferences, and facts that should persist across 
             &["plugins", "entries", "browser", "enabled"],
             serde_json::json!(browser_enabled),
         );
-        set_openclaw_config_value(
-            &mut cfg,
-            &["browser", "noSandbox"],
-            serde_json::json!(true),
-        );
+        set_openclaw_config_value(&mut cfg, &["browser", "noSandbox"], serde_json::json!(true));
         if browser_enabled {
             if bundled_plugin_entry_exists("browser") {
                 remove_bundled_plugin_load_paths(&mut cfg, "browser");
@@ -12044,12 +12040,7 @@ fn normalize_openclaw_config(cfg: &mut serde_json::Value) {
     append_unique_openclaw_config_array_strings(
         cfg,
         &["tools", "deny"],
-        &[
-            "file_write",
-            "file_fetch",
-            "dir_list",
-            "dir_fetch",
-        ],
+        &["file_write", "file_fetch", "dir_list", "dir_fetch"],
     );
     remove_openclaw_config_array_string(cfg, &["tools", "deny"], "web_fetch");
     for skill_id in DISABLED_NATIVE_SKILL_IDS {
@@ -18596,7 +18587,7 @@ pub async fn browser_session_close(session_id: String) -> Result<(), String> {
 }
 
 fn restart_browser_service_legacy(container: &str) -> Result<(), String> {
-let script = r#"
+    let script = r#"
 set -eu
 browser_pids="$(ps -eo pid,comm,args | awk '$2=="node" && $0 ~ /\/app\/browser-service\/server\.mjs/ {print $1}')"
 if [ -n "$browser_pids" ]; then
@@ -18665,10 +18656,12 @@ pub async fn browser_sessions_close_all() -> Result<(), String> {
     match browser_service_request::<serde_json::Value>("DELETE", "/sessions", None) {
         Ok(_) => Ok(()),
         Err(reset_error) => {
-            let container = running_gateway_container_name()
-                .ok_or_else(|| "Gateway container is not running. Start the sandbox first.".to_string())?;
-            restart_browser_service_legacy(container)
-                .map_err(|restart_error| format!("{}\n\nLegacy reset failed: {}", reset_error, restart_error))
+            let container = running_gateway_container_name().ok_or_else(|| {
+                "Gateway container is not running. Start the sandbox first.".to_string()
+            })?;
+            restart_browser_service_legacy(container).map_err(|restart_error| {
+                format!("{}\n\nLegacy reset failed: {}", reset_error, restart_error)
+            })
         }
     }
 }
