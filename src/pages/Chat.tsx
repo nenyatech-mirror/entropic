@@ -1438,7 +1438,8 @@ const PRIVACY_URL = entropicSitePath("/privacy");
 const HISTORY_LIMIT = 500;
 const ACTIVE_RUN_IDLE_TIMEOUT_MS = 120_000;
 const MAX_ATTACHMENTS_PER_MESSAGE = 4;
-const MAX_ATTACHMENT_BYTES = 5_000_000;
+const MAX_ATTACHMENT_BYTES = 25_000_000;
+const MAX_ATTACHMENT_MB = Math.floor(MAX_ATTACHMENT_BYTES / 1_000_000);
 const GENERATED_IMAGES_DEST_PATH = "generated-images";
 
 const QUICK_ACTION_ICONS: Record<ChatQuickActionIcon, typeof Mail> = {
@@ -2590,7 +2591,7 @@ export function Chat({
     const nextAttachments: PendingAttachment[] = [];
     for (const file of selectedFiles) {
       if (file.size > MAX_ATTACHMENT_BYTES) {
-        setError(`${file.name} is too large. Max size is 5 MB per file.`);
+        setError(`${file.name} is too large. Max size is ${MAX_ATTACHMENT_MB} MB per file.`);
         continue;
       }
       try {
