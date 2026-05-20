@@ -58,6 +58,7 @@ import {
   getCachedIntegrationProviders,
   getIntegrations,
   connectIntegration,
+  type IntegrationProvider,
 } from "../lib/integrations";
 import {
   getVisibleQuickActions,
@@ -1472,15 +1473,15 @@ const INTEGRATION_LOGOS: Partial<Record<
 };
 
 const HOME_PRIMARY_INTEGRATIONS = [
-  { name: "OneDrive", Logo: OneDriveLogo, size: "large" },
-  { name: "Outlook", Logo: OutlookLogo, size: "large" },
-  { name: "Gmail", Logo: GmailAssetLogo, size: "medium" },
-  { name: "Calendar", Logo: GoogleCalendarAssetLogo, size: "medium" },
-  { name: "Drive", Logo: GoogleDriveLogo, size: "medium" },
-  { name: "Sheets", Logo: GoogleSheetsLogo, size: "medium" },
-  { name: "Teams", Logo: MicrosoftTeamsLogo, size: "medium" },
-  { name: "Asana", Logo: AsanaLogo, size: "small" },
-  { name: "X", Logo: XAssetLogo, size: "small" },
+  { name: "OneDrive", provider: "onedrive", Logo: OneDriveLogo, size: "large" },
+  { name: "Outlook", provider: "outlook", Logo: OutlookLogo, size: "large" },
+  { name: "Gmail", provider: "google_email", Logo: GmailAssetLogo, size: "medium" },
+  { name: "Calendar", provider: "google_calendar", Logo: GoogleCalendarAssetLogo, size: "medium" },
+  { name: "Drive", provider: "google_drive", Logo: GoogleDriveLogo, size: "medium" },
+  { name: "Sheets", provider: "google_sheets", Logo: GoogleSheetsLogo, size: "medium" },
+  { name: "Teams", provider: "microsoft_teams", Logo: MicrosoftTeamsLogo, size: "medium" },
+  { name: "Asana", provider: "asana", Logo: AsanaLogo, size: "small" },
+  { name: "X", provider: "x", Logo: XAssetLogo, size: "small" },
 ] as const;
 
 const CRON_GUARD_LINES = [
@@ -1493,6 +1494,13 @@ type IntegrationSetupState = {
   requirement: IntegrationQuickActionRequirement;
   pendingAction: AgentQuickActionDefinition;
   status: "idle" | "connecting" | "awaiting_callback";
+  error: string | null;
+};
+
+type IntegrationLaunchState = {
+  provider: IntegrationProvider;
+  name: string;
+  status: "ready" | "connecting";
   error: string | null;
 };
 
@@ -1859,6 +1867,60 @@ function parseOneDriveIntent(raw: string): boolean {
   return /\b(?:upload|save|send|copy|move|create|make|write|put|list|search|find|download|share|folder|file|files|docx|xlsx|pptx|document|spreadsheet|presentation)\b/.test(text);
 }
 
+function formatIntegrationLaunchRoutingPrompt(
+  launch: IntegrationLaunchState,
+  message: string,
+): string | null {
+  const original = `Original user request: ${message.trim()}`;
+  switch (launch.provider) {
+    case "onedrive":
+      return [
+        "Use the connected OneDrive integration for this request.",
+        "Use only OneDrive tools for this request. Do not call Google Drive, Google Docs, Google Sheets, Outlook, Gmail, or local Office workflow tools unless the user explicitly asks for them.",
+        "Available OneDrive tools: `onedrive_items_list`, `onedrive_items_search`, `onedrive_item_resolve_path`, `onedrive_item_get`, `onedrive_item_content_get`, `onedrive_item_download`, `onedrive_item_share`, `onedrive_folder_create`, `onedrive_text_file_upload`, `onedrive_base64_file_upload`, `onedrive_docx_create`, and `onedrive_item_move`.",
+        "For uploading an existing local workspace file, read the file bytes from `/data/workspace`, base64-encode them, then call `onedrive_base64_file_upload` with the original filename. For creating a Word document directly from text, use `onedrive_docx_create`.",
+        "If the user mentions a OneDrive folder path, resolve or create the folder first, then pass its item id as `parentItemId`.",
+        "After a successful upload, report the OneDrive item name and any web/share link returned by the tool.",
+        original,
+      ].join("\n");
+    case "outlook":
+      return [
+        "Use the connected Outlook integration for this request.",
+        "Use only Outlook tools for this request. Do not call Gmail tools.",
+        "Available Outlook tools: `outlook_messages_list`, `outlook_message_get`, `outlook_message_send`, `outlook_mail_folders_list`, `outlook_calendars_list`, `outlook_events_list`, and `outlook_event_create`.",
+        "For inbox/list/summarize requests, start with `outlook_messages_list` using limit 10.",
+        original,
+      ].join("\n");
+    case "google_email":
+      return [
+        "Use the connected Gmail integration for this request.",
+        "Use only Gmail tools for this request. Do not call Outlook tools.",
+        "Available Gmail tools: `gmail_search`, `gmail_get`, `gmail_send`, and `gmail_draft`.",
+        "For inbox/list/summarize requests, start with `gmail_search` using query `in:inbox` and maxResults 10.",
+        original,
+      ].join("\n");
+    case "google_calendar":
+      return [
+        "Use the connected Google Calendar integration for this request.",
+        "Use only Google Calendar tools for this request.",
+        "Available Google Calendar tools: `calendar_list` and `calendar_create`.",
+        original,
+      ].join("\n");
+    case "x":
+      return [
+        "Use the connected X integration for this request.",
+        "Return concise bullets with direct X links, a short why-it-matters note, and clear recency cues when relevant.",
+        original,
+      ].join("\n");
+    default:
+      return [
+        `Use the connected ${launch.name} integration for this request.`,
+        `Use ${launch.name} tools only unless the user explicitly asks to involve another app.`,
+        original,
+      ].join("\n");
+  }
+}
+
 function parseGenericEmailIntent(raw: string): boolean {
   const text = raw.trim().toLowerCase();
   if (!text) return false;
@@ -2000,6 +2062,7 @@ export function Chat({
   const [composerModeBySession, setComposerModeBySession] = useState<Record<string, ComposerMode>>({});
   const [terminalStateBySession, setTerminalStateBySession] = useState<Record<string, ChatTerminalState>>({});
   const [integrationSetupBySession, setIntegrationSetupBySession] = useState<Record<string, IntegrationSetupState>>({});
+  const [integrationLaunchBySession, setIntegrationLaunchBySession] = useState<Record<string, IntegrationLaunchState>>({});
   const [quickSuggestionBySession, setQuickSuggestionBySession] = useState<Record<string, QuickSuggestionState>>({});
   const [builderChecklistBySession, setBuilderChecklistBySession] = useState<Record<string, BuilderChecklistState>>({});
 
@@ -2276,6 +2339,7 @@ export function Chat({
   );
   const hasPendingAudioAttachments = pendingAudioAttachments.length > 0;
   const integrationSetup = currentSession ? integrationSetupBySession[currentSession] || null : null;
+  const integrationLaunch = currentSession ? integrationLaunchBySession[currentSession] || null : null;
   const quickSuggestion = currentSession ? quickSuggestionBySession[currentSession] || null : null;
   const builderChecklist = currentSession ? builderChecklistBySession[currentSession] || null : null;
 
@@ -2289,6 +2353,26 @@ export function Chat({
       }
       return next;
     });
+  }
+
+  function setIntegrationLaunchForSession(sessionKey: string, value: IntegrationLaunchState | null) {
+    setIntegrationLaunchBySession((prev) => {
+      const next = { ...prev };
+      if (value) {
+        next[sessionKey] = value;
+      } else {
+        delete next[sessionKey];
+      }
+      return next;
+    });
+  }
+
+  function cancelIntegrationLaunch(sessionKey: string) {
+    setIntegrationLaunchForSession(sessionKey, null);
+    const cachedMessages = sessionMessagesRef.current[sessionKey] || [];
+    if (currentSessionRef.current === sessionKey && cachedMessages.length === 0) {
+      setShowWelcome(true);
+    }
   }
 
   function setTerminalStateForSession(sessionKey: string, value: ChatTerminalState | null) {
@@ -5350,6 +5434,7 @@ export function Chat({
       const snapshotComposerMode = composerModeBySessionRef.current[action.key] || null;
       const snapshotTerminalState = terminalStateBySessionRef.current[action.key] || null;
       const snapshotIntegrationSetup = integrationSetupBySession[action.key] || null;
+      const snapshotIntegrationLaunch = integrationLaunchBySession[action.key] || null;
       const snapshotQuickSuggestion = quickSuggestionBySession[action.key] || null;
       const snapshotBuilderChecklist = builderChecklistBySession[action.key] || null;
       const snapshotOutbox = outboxEntriesRef.current.filter((entry) => entry.sessionKey === action.key);
@@ -5388,6 +5473,12 @@ export function Chat({
         return next;
       });
       setIntegrationSetupBySession((prev) => {
+        if (!prev[action.key]) return prev;
+        const next = { ...prev };
+        delete next[action.key];
+        return next;
+      });
+      setIntegrationLaunchBySession((prev) => {
         if (!prev[action.key]) return prev;
         const next = { ...prev };
         delete next[action.key];
@@ -5458,6 +5549,9 @@ export function Chat({
           }
           if (snapshotIntegrationSetup) {
             setIntegrationSetupBySession((prev) => ({ ...prev, [action.key]: snapshotIntegrationSetup }));
+          }
+          if (snapshotIntegrationLaunch) {
+            setIntegrationLaunchBySession((prev) => ({ ...prev, [action.key]: snapshotIntegrationLaunch }));
           }
           if (snapshotQuickSuggestion) {
             setQuickSuggestionBySession((prev) => ({ ...prev, [action.key]: snapshotQuickSuggestion }));
@@ -6165,7 +6259,20 @@ export function Chat({
       !hasAttachments &&
       !messageContent.startsWith(INTERNAL_USER_PROMPT_PREFIX) &&
       messageContent.trim().length <= 500;
-    const xIntent = shouldCheckXIntent ? parseXSearchIntent(messageContent) : null;
+    const activeIntegrationLaunch =
+      sendSession && integrationLaunchBySession[sendSession]?.status === "ready"
+        ? integrationLaunchBySession[sendSession]
+        : null;
+    const integrationLaunchPrompt =
+      activeIntegrationLaunch && !messageContent.startsWith(INTERNAL_USER_PROMPT_PREFIX)
+        ? formatIntegrationLaunchRoutingPrompt(activeIntegrationLaunch, messageContent)
+        : null;
+    const integrationLaunchIntent = Boolean(integrationLaunchPrompt);
+    if (integrationLaunchPrompt && activeIntegrationLaunch) {
+      outboundMessageContent = integrationLaunchPrompt;
+      addDiag(`integration launcher routing provider=${activeIntegrationLaunch.provider}`);
+    }
+    const xIntent = !integrationLaunchIntent && shouldCheckXIntent ? parseXSearchIntent(messageContent) : null;
     if (xIntent && sendSession) {
       const xQuickActionCandidate = getQuickActionById("x_trending_news");
       const xQuickAction =
@@ -6226,6 +6333,7 @@ export function Chat({
 
     const oneDriveIntent =
       !xIntent &&
+      !integrationLaunchIntent &&
       shouldCheckXIntent &&
       parseOneDriveIntent(messageContent);
     if (oneDriveIntent && sendSession) {
@@ -6264,6 +6372,7 @@ export function Chat({
 
     const workspaceOfficeIntent =
       !xIntent &&
+      !integrationLaunchIntent &&
       !oneDriveIntent &&
       !hasAttachments &&
       !messageContent.startsWith(INTERNAL_USER_PROMPT_PREFIX) &&
@@ -6282,6 +6391,7 @@ export function Chat({
     let genericEmailProvider: "gmail" | "outlook" | null = null;
     if (
       !xIntent &&
+      !integrationLaunchIntent &&
       !oneDriveIntent &&
       !workspaceOfficeIntent &&
       shouldCheckXIntent &&
@@ -6315,6 +6425,7 @@ export function Chat({
 
     const outlookIntent =
       !xIntent &&
+      !integrationLaunchIntent &&
       !oneDriveIntent &&
       !workspaceOfficeIntent &&
       shouldCheckXIntent &&
@@ -6355,6 +6466,7 @@ export function Chat({
 
     const gmailIntent =
       !xIntent &&
+      !integrationLaunchIntent &&
       !oneDriveIntent &&
       !workspaceOfficeIntent &&
       !outlookIntent &&
@@ -6439,6 +6551,9 @@ export function Chat({
         sendId: pendingSend.id,
         path: workspaceOfficeAutoOpenPath,
       });
+    }
+    if (integrationLaunchIntent) {
+      setIntegrationLaunchForSession(sendSession, null);
     }
     upsertOutboxEntry(pendingSend);
     clearPendingAttachments();
@@ -6559,10 +6674,57 @@ export function Chat({
     );
   }
 
-  async function isIntegrationReady(provider: IntegrationQuickActionRequirement["provider"]): Promise<boolean> {
+  async function isIntegrationReady(provider: IntegrationProvider): Promise<boolean> {
     const integrations = await getIntegrations({ force: true });
     const entry = integrations.find((item) => item.provider === provider);
     return Boolean(entry && entry.connected && !entry.stale);
+  }
+
+  async function handleHomeIntegrationClick(integration: typeof HOME_PRIMARY_INTEGRATIONS[number]) {
+    const sessionKey = currentSessionRef.current || ensureComposerSession();
+    if (!sessionKey) return;
+    setError(null);
+    setShowWelcome(false);
+    setComposerModeForSession(sessionKey, "chat");
+    setIntegrationSetupForSession(sessionKey, null);
+    setQuickSuggestionForSession(sessionKey, null);
+    setBuilderChecklistForSession(sessionKey, null);
+    setIntegrationLaunchForSession(sessionKey, {
+      provider: integration.provider,
+      name: integration.name,
+      status: "connecting",
+      error: null,
+    });
+
+    try {
+      const connectedNow = await isIntegrationReady(integration.provider);
+      if (connectedNow) {
+        setIntegrationLaunchForSession(sessionKey, {
+          provider: integration.provider,
+          name: integration.name,
+          status: "ready",
+          error: null,
+        });
+        requestAnimationFrame(() => textareaRef.current?.focus());
+        return;
+      }
+
+      await connectIntegration(integration.provider);
+      setIntegrationLaunchForSession(sessionKey, {
+        provider: integration.provider,
+        name: integration.name,
+        status: "connecting",
+        error: `Finish connecting ${integration.name}, then click this icon again.`,
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : `Failed to connect ${integration.name}.`;
+      setIntegrationLaunchForSession(sessionKey, {
+        provider: integration.provider,
+        name: integration.name,
+        status: "connecting",
+        error: message,
+      });
+    }
   }
 
   function openQuickSuggestion(action: AgentQuickActionDefinition, sessionKeyInput?: string) {
@@ -6990,6 +7152,56 @@ export function Chat({
                 Verify connection
               </button>
             </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  function renderIntegrationLaunchAssistantCard() {
+    if (!integrationLaunch || !currentSession) return null;
+    const selected = HOME_PRIMARY_INTEGRATIONS.find((item) => item.provider === integrationLaunch.provider);
+    const Logo = selected?.Logo ?? Puzzle;
+
+    return (
+      <div className="flex justify-start">
+        <div className="max-w-[85%] sm:max-w-[72%]">
+          <div className="px-4 py-3 rounded-2xl bg-[var(--bg-tertiary)] text-[var(--text-primary)] border border-[var(--glass-border-subtle)]">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Logo className="h-5 w-5 object-contain" />
+                <span className="text-xs font-semibold text-[var(--text-primary)]">
+                  {integrationLaunch.name}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => cancelIntegrationLaunch(currentSession)}
+                className="text-xs text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
+              >
+                Cancel
+              </button>
+            </div>
+
+            {integrationLaunch.status === "ready" ? (
+              <>
+                <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
+                  What do you want to do with {integrationLaunch.name}?
+                </p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  Send your next message and I will use {integrationLaunch.name} for it.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="mt-3 text-sm font-semibold text-[var(--text-primary)]">
+                  Connecting {integrationLaunch.name}
+                </p>
+                <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                  {integrationLaunch.error || "Complete authorization in your browser, then come back here."}
+                </p>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -7977,14 +8189,17 @@ export function Chat({
               key={`integration-row-${rowIndex}`}
               className="flex w-full items-start justify-center gap-7 sm:gap-11"
             >
-              {row.map(({ name, Logo, size }) => {
+              {row.map((integration) => {
+                const { name, Logo, size } = integration;
                 const large = size === "large";
                 const medium = size === "medium";
                 return (
                   <button
                     key={name}
                     type="button"
-                    onClick={() => onNavigate?.("integrations")}
+                    onClick={() => {
+                      void handleHomeIntegrationClick(integration);
+                    }}
                     className="group flex w-[72px] flex-col items-center gap-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-[var(--purple-accent)]/25"
                     aria-label={`Open Integrations to connect ${name}`}
                     title={`Connect ${name}`}
@@ -8413,7 +8628,7 @@ export function Chat({
     error && isBillingIssueMessage(error) && !isAuthenticated && isAuthConfigured
   );
 
-  const hasInlineAssistantCard = Boolean(builderChecklist || integrationSetup || quickSuggestion);
+  const hasInlineAssistantCard = Boolean(builderChecklist || integrationSetup || integrationLaunch || quickSuggestion);
 
   // Main Chat UI
   return (
@@ -8510,6 +8725,7 @@ export function Chat({
           {loadingIndicator}
           {renderBuilderChecklistAssistantCard()}
           {renderIntegrationSetupAssistantCard()}
+          {renderIntegrationLaunchAssistantCard()}
           {renderQuickSuggestionAssistantCard()}
           <div ref={messagesEndRef} />
         </div>
